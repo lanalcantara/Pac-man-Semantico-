@@ -1,14 +1,8 @@
 using UnityEditor;
 using UnityEngine;
 
-[InitializeOnLoad]
 public static class ForcarAtualizacaoAssetDatabase
 {
-    static ForcarAtualizacaoAssetDatabase()
-    {
-        AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
-    }
-
     [MenuItem("Pac-Man Semântico/Recompilar e Atualizar Scripts")]
     public static void Atualizar()
     {

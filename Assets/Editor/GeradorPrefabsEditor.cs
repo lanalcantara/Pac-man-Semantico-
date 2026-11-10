@@ -482,70 +482,27 @@ public static class GeradorPrefabsEditor
     }
 
     // =========================================================================
-    // 3. MODELO 3D DO PERSONAGEM PAC-MAN JOGADOR COM BOCA ANIMADA
+    // 3. MODELO 3D DO PERSONAGEM PAC-MAN JOGADOR (ESFERA CLÁSSICA PERFEITA)
     // =========================================================================
     private static void CriarPrefabPacManJogador()
     {
-        GameObject pacManRaiz = new GameObject("PacManJogador");
+        GameObject pacManRaiz = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        pacManRaiz.name = "PacManJogador";
+        Object.DestroyImmediate(pacManRaiz.GetComponent<Collider>());
 
         Color corAmareloPacMan = new Color(1f, 0.92f, 0.05f);
         Color emissaoAmarelo = new Color(0.85f, 0.75f, 0.02f);
         Material matPacMan = CriarOuObterMaterial("Mat_PacMan_Amarelo", corAmareloPacMan, emissaoAmarelo, 0.95f);
+        pacManRaiz.GetComponent<Renderer>().sharedMaterial = matPacMan;
+        pacManRaiz.transform.localScale = new Vector3(0.85f, 0.85f, 0.85f);
 
-        Color corPretoOlho = new Color(0.05f, 0.05f, 0.05f);
-        Material matOlhoPreto = CriarOuObterMaterial("Mat_Olho_Preto", corPretoOlho, Color.clear, 0.9f);
-
-        // Mandíbula Superior
-        GameObject mandibulaSup = new GameObject("MandibulaSuperior");
-        mandibulaSup.transform.SetParent(pacManRaiz.transform, false);
-
-        GameObject hemiSup = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        hemiSup.name = "Malha_MandibulaSup";
-        hemiSup.transform.SetParent(mandibulaSup.transform, false);
-        hemiSup.transform.localPosition = new Vector3(0f, 0.15f, 0f);
-        hemiSup.transform.localScale = new Vector3(0.9f, 0.6f, 0.9f);
-        Object.DestroyImmediate(hemiSup.GetComponent<Collider>());
-        hemiSup.GetComponent<Renderer>().sharedMaterial = matPacMan;
-
-        // Olho Esquerdo Retrô
-        GameObject olhoEsq = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        olhoEsq.name = "Olho_Esq";
-        olhoEsq.transform.SetParent(mandibulaSup.transform, false);
-        olhoEsq.transform.localPosition = new Vector3(-0.25f, 0.35f, 0.25f);
-        olhoEsq.transform.localScale = new Vector3(0.12f, 0.2f, 0.12f);
-        Object.DestroyImmediate(olhoEsq.GetComponent<Collider>());
-        olhoEsq.GetComponent<Renderer>().sharedMaterial = matOlhoPreto;
-
-        // Olho Direito Retrô
-        GameObject olhoDir = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        olhoDir.name = "Olho_Dir";
-        olhoDir.transform.SetParent(mandibulaSup.transform, false);
-        olhoDir.transform.localPosition = new Vector3(0.25f, 0.35f, 0.25f);
-        olhoDir.transform.localScale = new Vector3(0.12f, 0.2f, 0.12f);
-        Object.DestroyImmediate(olhoDir.GetComponent<Collider>());
-        olhoDir.GetComponent<Renderer>().sharedMaterial = matOlhoPreto;
-
-        // Mandíbula Inferior
-        GameObject mandibulaInf = new GameObject("MandibulaInferior");
-        mandibulaInf.transform.SetParent(pacManRaiz.transform, false);
-
-        GameObject hemiInf = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        hemiInf.name = "Malha_MandibulaInf";
-        hemiInf.transform.SetParent(mandibulaInf.transform, false);
-        hemiInf.transform.localPosition = new Vector3(0f, -0.15f, 0f);
-        hemiInf.transform.localScale = new Vector3(0.9f, 0.6f, 0.9f);
-        Object.DestroyImmediate(hemiInf.GetComponent<Collider>());
-        hemiInf.GetComponent<Renderer>().sharedMaterial = matPacMan;
-
-        // Script de Animação Chomp
-        AnimacaoBocaPacMan anim = pacManRaiz.AddComponent<AnimacaoBocaPacMan>();
-        anim.mandibulaSuperior = mandibulaSup.transform;
-        anim.mandibulaInferior = mandibulaInf.transform;
+        // Script de Animação e feedback sonoro Chomp
+        pacManRaiz.AddComponent<AnimacaoBocaPacMan>();
 
         PrefabUtility.SaveAsPrefabAsset(pacManRaiz, CaminhoPacManJogador);
         Object.DestroyImmediate(pacManRaiz);
 
-        Debug.Log($"<color=#00FF99><b>[Pac-Man Semântico]</b></color> Prefab Pac-Man Jogador com boca animada criado em: {CaminhoPacManJogador}");
+        Debug.Log($"<color=#00FF99><b>[Pac-Man Semântico]</b></color> Prefab Pac-Man Jogador (Esfera Clássica Perfeita) criado em: {CaminhoPacManJogador}");
     }
 
     // =========================================================================

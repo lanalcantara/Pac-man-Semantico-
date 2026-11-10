@@ -18,8 +18,9 @@ using UnityEngine.Rendering.Universal;
 /// - Assets/Materials/DarkGridMaterial_Chao.mat
 /// Além disso, aplica automaticamente aos objetos da cena (Plane, Paredes e Câmeras com Skybox Preto).
 /// ============================================================================
-/// </summary>
-[InitializeOnLoad]
+// Utilitário de geração de materiais DarkGrid (Desativado de auto-execução para
+// preservar o visual diurno de grama verde e paredes metálicas solicitado pelo usuário).
+// ============================================================================
 public static class GeradorMaterialDarkGridEditor
 {
     public const string CaminhoPastaMateriais = "Assets/Materials";
@@ -34,16 +35,7 @@ public static class GeradorMaterialDarkGridEditor
     public const string CaminhoMatParedeAzul = CaminhoPastaMateriais + "/DarkGridMaterial_Hospedeiros_Azul.mat";
     public const string CaminhoMatChao = CaminhoPastaMateriais + "/DarkGridMaterial_Chao.mat";
 
-    static GeradorMaterialDarkGridEditor()
-    {
-        EditorApplication.delayCall += () =>
-        {
-            if (!Application.isPlaying)
-            {
-                GarantirEAplicarDarkGridFisico(forcarRecriacao: true);
-            }
-        };
-    }
+    // Auto-inicialização removida para evitar que a cena volte para o tema escuro/preto no reload.
 
     [MenuItem("Pac-Man Semântico/5. Gerar e Aplicar Material DarkGrid Físico (Wireframe + Skybox Preto)", false, 5)]
     public static void MenuGerarEAplicarDarkGrid()

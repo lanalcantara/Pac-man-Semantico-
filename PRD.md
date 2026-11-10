@@ -1,109 +1,64 @@
 # Documento de Requisitos do Produto (PRD)
 ## Pac-Man Semântico (VirtOnto) - CIn-UFPE
+**Versão:** 2.1 (Sprint 3 - Movimentação, Câmera e VR Nativo Quest 3 / 3S)  
+**Data:** Novembro de 2026  
+**Ambiente:** Unity 6 LTS (`6000.6.7f1`), Universal Render Pipeline (URP), OpenXR  
 
 ---
 
 ### 1. Visão Geral e Objetivos do Projeto
-O **Pac-Man Semântico (VirtOnto)** é um jogo e ambiente interativo acadêmico desenvolvido no Centro de Informática da Universidade Federal de Pernambuco (CIn-UFPE) para a disciplina de **Realidade Virtual e Aumentada (RVA)**.
+O **Pac-Man Semântico (VirtOnto)** é um ambiente interativo acadêmico e lúdico desenvolvido no Centro de Informática da Universidade Federal de Pernambuco (CIn-UFPE) no contexto de **Realidade Virtual e Aumentada (RVA)**.
 
-O objetivo central do projeto é unir a consagrada jogabilidade arcade do clássico **Pac-Man dos anos 80** com raciocínio semântico baseado em **Ontologias OWL** e regras **SWRL**, criando um ambiente lúdico e imersivo capaz de:
-1. Ensino interativo de conceitos de Parasitologia médica (classes de helmintos, protozoários, ciclos biológicos, hospedeiros definitivos/intermediários).
-2. Validação ontológica em tempo real: o ato do Pac-Man devorar itens ou enfrentar inimigos corresponde à validação e classificação formal de axiomas na Lógica de Descrição $\mathcal{ALCQ}(\mathcal{D})$.
-3. Experiência de visualização híbrida: modo de desktop e WebGL em perspectiva isométrica **Pinball 3D** (estilo mesa pinball 3D retrô) e modo totalmente imersivo em óculos de realidade virtual **Meta Quest (OpenXR)**.
-
----
-
-### 2. Personagens e Identidade Visual
-
-#### 2.1 Pac-Man (Protagonista / Jogador)
-- **Design Procedural 3D:** Esfera amarela clássica (`Mat_PacMan_Amarelo`, `#FFD700`) dividida em mandíbula superior (`MandibulaSuperior`) e inferior (`MandibulaInferior`), com olhos expressivos (`Olho_Esq`, `Olho_Dir`).
-- **Animação Dinâmica ("Waka-Waka"):** Script [AnimacaoBocaPacMan.cs](file:///d:/VirtOnto-main/VirtOnto-main/Assets/AnimacaoBocaPacMan.cs) realiza a rotação periódica das mandíbulas, sincronizando a velocidade de mastigação e os efeitos sonoros procedurais retrô de "chomp" com a velocidade de deslocamento.
-- **Escala Física:** $0.80$ em todos os eixos, garantindo passagem folgada e fluida pelas canaletas e curvas do labirinto sem atrito lateral.
-- **Física e Travas:** Controlado via `Rigidbody` contínuo dinâmico com travamento de rotações e do eixo $Y$ (`FreezePositionY`), assentado perfeitamente no nível do solo ($y = 0.0\text{m}$ na base, $y = 0.40\text{m}$ no centro da esfera).
-
-#### 2.2 Os 4 Fantasmas Canônicos
-- **Modelagem:** Cápsulas 3D estilizadas com base recortada procedural e pares de olhos brancos com pupilas direcionais.
-- **Cores Oficiais dos Anos 80:**
-  1. **Blinky (Vermelho - `#FF0000`):** Perseguidor direto (Shadow/Chaser).
-  2. **Pinky (Rosa - `#FFB8FF`):** Estrategista de emboscada (Speedy/Ambusher).
-  3. **Inky (Ciano - `#00FFFF`):** Flanqueador tático (Bashful/Flanker).
-  4. **Clyde (Laranja - `#FFB852`):** Patrulheiro tímido e dispersivo (Pokey/Disperser).
-- **Inteligência Artificial e NavMesh:** Navegam exclusivamente através de malha de navegação (`NavMeshSurface`), com pontos de spawn na gaiola central do labirinto.
-- **Estados Semânticos:**
-  - *Patrol / Chase (Hostil):* Perseguem o Pac-Man. O contato direto resulta em perda de 1 vida e respawn seguro do jogador.
-  - *Vulnerable (Azul Escuro Piscante):* Ativado após o Pac-Man devorar uma **Power Pellet**. Os fantasmas reduzem a velocidade, fogem do jogador e podem ser devorados, rendendo $+200$ pontos.
-
-#### 2.3 Itens do Labirinto
-- **Gemas Ontológicas (Pac-Dots):** Esferas douradas de tamanho reduzido ($\text{scale} \approx 0.20$) espalhadas por todas as vias do labirinto. Cada gema representa uma instância de um conceito de Parasitologia (ex.: *Ascaris lumbricoides*, *Enterobius vermicularis*, *Giardia lamblia*).
-- **Power Pellets (Gemas Especiais):** Esferas luminosas de tamanho intermediário ($\text{scale} \approx 0.50$) posicionadas estrategicamente nos quatro cantos do labirinto. Possuem animação de pulsação suave em escala e emissão. Ao serem consumidas, ativam o estado de vulnerabilidade dos fantasmas por 8 segundos.
-- **Cerejas / Frutas Bônus:** Modelos procedurais especiais que surgem no centro do mapa concedendo pontuação extra.
+O objetivo do projeto é unir a jogabilidade arcade clássica do **Pac-Man** com raciocínio e modelagem semântica baseada em **Ontologias OWL** e regras **SWRL**, oferecendo:
+1. Ensino interativo de conceitos de Parasitologia médica (classes taxonômicas, ciclos de vida, hospedeiros definitivos e intermediários).
+2. Validação ontológica em tempo real: o consumo de instâncias e a interação com agentes hostis correspondem à satisfatibilidade de axiomas na Lógica de Descrição $\mathcal{ALCQ}(\mathcal{D})$.
+3. Suporte multiplataforma com foco principal na **execução nativa em Realidade Virtual (VR 360° Standalone)** no **Meta Quest 3** e **Meta Quest 3S**, mantendo compatibilidade de testes em Desktop Windows e WebGL.
 
 ---
 
-### 3. Labirinto e Arquitetura Espacial
-- **Design:** Fiel à malha clássica simétrica arcade dos anos 80, com corredores horizontais, verticais, câmara central de renascimento dos fantasmas (Ghost House) e portais de teletransporte lateral (Wrap-around tunnels).
-- **Materiais e Cores:**
-  - Paredes: Tom azul-violáceo neon característico (`Mat_Parede_Labirinto_AzulNeon`, HSL compatível com a paleta do Protégé).
-  - Piso: Superfície escura texturizada antirreflexiva (`Mat_ChaoLabirinto_Escuro`).
-- **Dimensões e Proporções:** Largura de canaleta de $1.8\text{m}$, garantindo circulação simultânea sem travamentos físicos.
+### 2. Identidade Visual e Cenário Contemporâneo
+
+#### 2.1 Cenário e Iluminação
+- **Superfície do Labirinto:** Piso fosco verde vibrante inspirado em grama de campo de futebol (`Mat_Chao_GramaVerde`).
+- **Paredes:** Estruturas modulares em cinza metálico/arquitetônico claro com acabamento industrial suave (`Mat_Parede_CinzaMetalico`), com altura máxima padronizada em $2.60\text{m}$.
+- **Iluminação Diurna (Tarde / Golden Hour):** Luz solar direcional quente (intensidade $1.65$, ângulo diagonal suave a $34^\circ / 48^\circ$), com sombras suaves atenuadas em $0.32$ para garantir alta visibilidade dentro dos corredores sem pontos cegos escuros.
+- **Ambiente e Céu:** Céu limpo azul diurno suave, com iluminação de ambiente no modo Trilight (luz celeste azulada, horizonte quente dourado e reflexo verde do gramado).
+
+#### 2.2 Pac-Man (Protagonista / Jogador)
+- **Modelagem Procedural 3D:** Esfera articulada amarela com mandíbulas superior e inferior móveis e olhos expressivos.
+- **Escala e Física:** Proporção física $0.80$, controlado por `Rigidbody` dinâmico contínuo travado no solo ($y = 0.0\text{m}$) com restrições estritas de rotação e do eixo vertical (`FreezePositionY`).
+- **Orientação de Movimento:** Rotação visual suave voltada para o vetor de deslocamento.
+
+#### 2.3 Fantasmas e Gemas Ontológicas
+- **Fantasmas Canônicos:** 4 agentes com inteligência de patrulha autônoma via `NavMeshSurface` (Blinky, Pinky, Inky, Clyde), com estados hostil e vulnerável temporariamente desacoplados para validação de movimentação.
+- **Gemas e Power Pellets:** Representações espaciais de instâncias taxonômicas consumíveis instantaneamente pela boca do avatar.
 
 ---
 
-### 4. Sistema de Câmeras e Perspectivas
+### 3. Sistema de Câmera e Perspectivas (Zero Tremedeira)
 
-| Modo | Ângulo / FOV | Descrição |
+| Modo / Nível de Zoom | Parâmetros de Câmera | Experiência de Jogabilidade |
 |---|---|---|
-| **Pinball 3D (Padrão)** | Pitch $54^\circ$, FOV $62^\circ$, Altura $15.5\text{m}$, Offset $Z = -11.5\text{m}$ | Visão inclinada dinâmica de cima para baixo com tracking suave em interpolação linear (`Lerp`), simulando a experiência das clássicas mesas de Pinball 3D. |
-| **Mesa Completa** | Pitch $55^\circ$, FOV $65^\circ$, Altura $22.0\text{m}$, Offset $Z = -14.5\text{m}$ | Visão aérea panorâmica que enquadra todo o tabuleiro do labirinto simultaneamente. |
-| **Terceira Pessoa Baixa** | Pitch $22^\circ$, FOV $65^\circ$, Altura $2.5\text{m}$, Offset $Z = -3.8\text{m}$ | Visão logo atrás do ombro do Pac-Man, acompanhando curvas em tempo real. |
-| **Primeira Pessoa VR** | Alinhada ao HMD do Meta Quest, FOV Roomscale | Imersão completa em realidade virtual onde o usuário caminha e enxerga através dos olhos do Pac-Man. |
+| **Visão 3ª Pessoa Próxima (Zoom 0.0)** | Altura $3.50\text{m}$, Distância $2.20\text{m}$, Pitch $\approx 57^\circ$ | Foco próximo e imersivo no Pac-Man, com visão limpa do corredor à frente. Câmera sobrevoa acima das paredes ($2.60\text{m}$), garantindo zero oclusão e zero tremedeira. |
+| **Visão Tática Panorâmica (Zoom 1.0)** | Altura $6.50\text{m}$, Distância $4.50\text{m}$, Pitch $\approx 57^\circ$ | Visão ampla dos corredores adjacentes e bifurcações, permitindo planejamento tático de rotas. |
+| **Transição Contínua (Zoom Fluido)** | Interpolação via `Mathf.Lerp` / `SmoothDamp` | Zoom contínuo sem cortes de tela através dos gatilhos (RT/LT) do joystick Xbox, bumpers (RB/LB), roda do mouse ou thumbstick VR. |
+| **Imersão VR 360° (Meta Quest 3/3S)** | Rastreamento Roomscale 6DoF via OpenXR | Liberdade para movimentar e girar a cabeça naturalmente em 360° enquanto acompanha o labirinto. |
 
-*Atalho:* Pressionar tecla **`C`** para alternar instantaneamente entre os modos de câmera.
-
----
-
-### 5. Mecânicas de Jogabilidade, Telas e Interface (HUD)
-
-#### 5.1 Tela Inicial de Entrada (Modal PLAY)
-- Ao abrir o jogo, a execução inicia pausada (`Time.timeScale = 0.0f`).
-- Um modal translúcido com moldura neon exibe o título **PAC-MAN SEMÂNTICO (VirtOnto)** e o botão de destaque **`[ ▶ INICIAR JOGO (PLAY) ]`**.
-- O clique no botão aciona o `EventSystem` da cena, destravando o tempo (`Time.timeScale = 1.0f`) e iniciando a partida.
-
-#### 5.2 Sistema de Vidas e Game Over
-- O jogador inicia com **3 vidas**.
-- As vidas restantes são exibidas no HUD por meio de ícones de **Pac-Mans pequenos amarelos**.
-- Cada contato com fantasma hostil consome 1 vida, executa feedback sonoro e visual de colisão (Juice effect), repele o fantasma agressor e reposiciona o jogador no ponto de spawn inicial.
-- Quando as vidas se esgotam ($0$), o jogo exibe a tela de **GAME OVER** com opção de reiniciar a partida via reload de cena.
-
-#### 5.3 Painel Lateral Semântico (HUD Arcade Retrô)
-- Canvas configurado com `Canvas Scaler` no modo *Scale With Screen Size* (1920x1080).
-- Exibe em tempo real:
-  - Pontuação acumulada.
-  - Vidas restantes em ícones clássicos.
-  - Nome da última instância parasitológica capturada (ex.: `Ascaris_lumbricoides_01`).
-  - Classe taxonômica inferida na ontologia (ex.: `HelminthoIntestinal`).
-  - Axioma em Lógica de Descrição ($\mathcal{DL}$) gerado.
-- Botão **`[ X ]`** superior direito permite minimizar o painel lateral para não obstruir a visão da arena. Tecla de atalho: **`H`**.
+#### Regras de Rotação e Controles
+- **Rotação Soberana (Yaw Livre):** O ângulo da câmera é determinado exclusivamente pelo jogador (analógico direito, mouse ou teclas Q/E). Não há auto-alinhamento forçado que dispute o controle com o jogador ao caminhar para os lados.
+- **Controles Unificados:** O direcional de movimento (WASD ou stick esquerdo) responde sempre de forma relativa ao que é exibido na tela (empurrar para cima move para frente na visão do jogador), independente do nível de zoom.
 
 ---
 
-### 6. Controles e Entradas
+### 4. Plataformas de Hardware Homologadas
 
-- **Teclado (Desktop / WebGL):**
-  - Movimentação direcional: Teclas clássicas **`W`**, **`A`**, **`S`**, **`D`** e **Setas Direcionais** (`↑`, `↓`, `←`, `→`).
-  - Alternar Câmera: **`C`**.
-  - Minimizar/Restaurar HUD: **`H`**.
-  - Simular Power Pellet (Debug): **`P`**.
-- **Realidade Virtual (Meta Quest / OpenXR):**
-  - Comando Esquerdo: Thumbstick analógico para locomoção suave (Smooth Locomotion).
-  - Comando Direito: Thumbstick analógico para rotação angular rápida (Snap Turn de $45^\circ$) e acionamento por Grip/Trigger.
-  - Feedback Háptico dual em ambos os controladores ao consumir gemas ou sofrer dano.
-
----
-
-### 7. Arquitetura de Backend e Ontologias
-- **Ontologia OWL:** Modelada em Protégé com formalismo $\mathcal{ALCQ}(\mathcal{D})$.
-- **Fontes de Dados:**
-  - [parasitology_ontology.json](file:///d:/VirtOnto-main/VirtOnto-main/Assets/Resources/parasitology_ontology.json): Mapeamento hierárquico de classes, subclasses e restrições.
-  - [parasitology_spatial_graph_3d.json](file:///d:/VirtOnto-main/VirtOnto-main/Assets/Resources/parasitology_spatial_graph_3d.json): Grafo tridimensional de relações ontológicas.
-- **Backend Java Spring Boot (Opcional):** Microsserviço REST responsável por persistência e inferências complexas de grafos via endpoints `/api/ontology/nodes`, `/api/ontology/edges` e `/api/ontology/graph`.
+1. **Meta Quest 3 (VR Nativo Standalone):**
+   - **Chipset:** Qualcomm Snapdragon XR2 Gen 2, 8 GB RAM, GPU Adreno 740.
+   - **Display / Óptica:** Lentes Pancake, dual displays 4K+ ($2064 \times 2208$ px por olho), IPD contínuo.
+   - **Formato:** Arquivo executável local `.apk` (Android 12L+, ARM64, IL2CPP).
+2. **Meta Quest 3S (VR Nativo Standalone):**
+   - **Chipset:** Qualcomm Snapdragon XR2 Gen 2, 8 GB RAM, GPU Adreno 740.
+   - **Display / Óptica:** Lentes Fresnel, display único ($1832 \times 1920$ px por olho).
+   - **Formato:** Executa **o mesmo arquivo `.apk`** do Quest 3 sem necessidade de compilação separada.
+3. **PC Desktop / WebGL:**
+   - Ambiente de desenvolvimento, depuração rápida e validação de regras ontológicas via browser.
