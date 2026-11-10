@@ -178,6 +178,7 @@ namespace VirtOnto.Model
 
         // Propriedades semânticas Description Logic
         public string ConceptClass { get; set; } = string.Empty;
+        public string OntologyClass { get => ConceptClass; set => ConceptClass = value; }
         public string DLExpression { get; set; } = string.Empty;
         public bool IsValid { get; set; } = true;
         public int ScoreValue { get; set; } = 10;
@@ -292,6 +293,12 @@ namespace VirtOnto.Model
         }
 
         public string RelationType
+        {
+            get => relationType_;
+            set => relationType_ = value;
+        }
+
+        public string Predicate
         {
             get => relationType_;
             set => relationType_ = value;

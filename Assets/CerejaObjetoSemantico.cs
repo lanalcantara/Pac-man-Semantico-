@@ -17,7 +17,7 @@ public class CerejaObjetoSemantico : InstanciaSemanticaBase
     protected override void Awake()
     {
         base.Awake();
-        m_Id = "cereja_object_property_" + Mathf.Abs(GetInstanceID());
+        m_Id = "cereja_object_property_" + Mathf.Abs(GetHashCode());
         m_NomeClasse = nomePropriedadeObjeto;
         m_ExpressaoDL = expressaoDLPropriedade;
         m_ValorPontuacao = 100;

@@ -70,6 +70,13 @@ namespace PacMan.Semantics
         [Tooltip("Velocidade de fuga do fantasma no modo vulnerável.")]
         public float velocidadeVulneravel = 1.4f;
 
+        [Header("Visibilidade e Minimalismo")]
+        [Tooltip("Exibe ou oculta os balões flutuantes 3D de texto explicativo acima dos fantasmas.")]
+        public bool exibirRotulosExplicativosFantasmas = false;
+
+        // Contador de fantasmas devorados durante o ciclo atual de Power Pellet (200, 400, 800, 1600 pts)
+        private int m_FantasmasComidosNoCiclo = 0;
+
         [Header("Status do Reasoner (HermiT / Protégé WebSocket 8085)")]
         [Tooltip("Estado lógico atual do Reasoner (true = CONSISTENTE -> Patrol Azul Translúcido; false = INCONSISTENTE -> Chase Vermelho Sólido).")]
         public bool reasonerConsistente = true;
@@ -297,12 +304,33 @@ namespace PacMan.Semantics
             if (tempoPowerRestante > 0f)
             {
                 tempoPowerRestante -= Time.deltaTime;
+                AtualizarVisualVulneravelFantasmas(true, tempoPowerRestante);
+
                 if (tempoPowerRestante <= 0f)
                 {
                     tempoPowerRestante = 0f;
                     pacmanIsPowered = false;
+                    m_FantasmasComidosNoCiclo = 0;
+                    AtualizarVisualVulneravelFantasmas(false, 0f);
                     OnPacManPowerStateChanged?.Invoke(false);
                     Debug.Log("<color=#FF9900><b>[Motor Semântico]</b></color> Efeito do Power Pellet expirou. Pac-Man retornou ao estado normal.");
+                }
+            }
+        }
+
+        private void AtualizarVisualVulneravelFantasmas(bool ativo, float tempoRestante)
+        {
+            if (m_ListaFantasmasAtivos == null) return;
+            for (int i = 0; i < m_ListaFantasmasAtivos.Count; i++)
+            {
+                GameObject g = m_ListaFantasmasAtivos[i];
+                if (g != null && g.activeInHierarchy)
+                {
+                    var anim = g.GetComponent<AnimacaoFantasma>();
+                    if (anim != null)
+                    {
+                        anim.AtualizarVisualVulneravel(ativo, tempoRestante);
+                    }
                 }
             }
         }
@@ -443,6 +471,12 @@ namespace PacMan.Semantics
             if (ghostObj == null) return;
 
             Transform trLabel = ghostObj.transform.Find("Rotulo_3D_Estado_Fantasma");
+            if (!exibirRotulosExplicativosFantasmas)
+            {
+                if (trLabel != null) trLabel.gameObject.SetActive(false);
+                return;
+            }
+
             GameObject labelObj;
             if (trLabel != null)
             {
@@ -516,7 +550,7 @@ namespace PacMan.Semantics
             else if (idLower.Contains("clyde") || idLower.Contains("invalido_04") || idLower.Contains("violacao_04") || idLower.Contains("4")) papelIndex = 3;
             else
             {
-                papelIndex = Mathf.Abs(ghostObj.GetInstanceID()) % 4;
+                papelIndex = Mathf.Abs(ghostObj.GetHashCode()) % 4;
             }
 
             // Waypoints de patrulha livre distribuídos pelos 4 quadrantes do labirinto
@@ -603,7 +637,7 @@ namespace PacMan.Semantics
             Vector3 posAtual = tr.position;
 
             // Variação de velocidade por fantasma para quebrar qualquer sincronia
-            int idxFantasma = Mathf.Abs(ghostObj.GetInstanceID()) % 4;
+            int idxFantasma = Mathf.Abs(ghostObj.GetHashCode()) % 4;
             float variacaoVel = 0.9f + (idxFantasma * 0.2f); // 0.9x, 1.1x, 1.3x, 1.5x
 
             float velocidadeAtual = estado switch
@@ -617,7 +651,22 @@ namespace PacMan.Semantics
             posPacMan = new Vector3(posPacMan.x, posAtual.y, posPacMan.z);
 
             // Em modo Patrol (CONSISTENTE), os Reasoner Agents ignoram o jogador.
-            // Apenas causam colisão de alerta se estiverem em modo Chase (Aggressive / INCONSISTENTE)
+            // Em modo Vulnerable (Power Pellet ativo), o Pac-Man devora o fantasma ao encostar!
+            if (estado == GameEntityState.Vulnerable && alvoPacMan != null)
+            {
+                float distHorizontal = Vector2.Distance(new Vector2(posAtual.x, posAtual.z), new Vector2(posPacMan.x, posPacMan.z));
+                if (distHorizontal <= 0.95f && Mathf.Abs(posAtual.y - posPacMan.y) < 1.8f)
+                {
+                    var obs = ghostObj.GetComponent<ObstaculoInvalidoSemantico>() ?? ghostObj.GetComponentInParent<ObstaculoInvalidoSemantico>();
+                    if (obs != null)
+                    {
+                        obs.DevorarFantasmaPorPowerPellet();
+                        return;
+                    }
+                }
+            }
+
+            // Apenas causam colisão de dano se estiverem em modo Chase (Aggressive / INCONSISTENTE)
             if (estado == GameEntityState.Aggressive && alvoPacMan != null)
             {
                 float distHorizontal = Vector2.Distance(new Vector2(posAtual.x, posAtual.z), new Vector2(posPacMan.x, posPacMan.z));
@@ -899,6 +948,7 @@ namespace PacMan.Semantics
         /// </summary>
         public void AtivarPowerPellet(float duracao = 8.0f)
         {
+            m_FantasmasComidosNoCiclo = 0;
             pacmanIsPowered = true;
             tempoPowerRestante = duracao;
             OnPacManPowerStateChanged?.Invoke(true);
@@ -906,8 +956,21 @@ namespace PacMan.Semantics
             Debug.Log($"<color=#FFD700><b>[Motor Semântico - SpecialGem]</b></color> Pac-Man consumiu Power Pellet! " +
                       $"Estado Empowered ativo por {duracao:F1}s. Raciocinador avaliando vulnerabilidade dos fantasmas...");
 
+            AtualizarVisualVulneravelFantasmas(true, duracao);
+
             // Força avaliação imediata das regras
             ProcessarRaciocinioFantasmas();
+        }
+
+        /// <summary>
+        /// Registra que um fantasma vulnerável foi devorado pelo Pac-Man durante o ciclo atual de Power Pellet.
+        /// Retorna a pontuação progressiva clássica: 200 -> 400 -> 800 -> 1600 pts.
+        /// </summary>
+        public int RegistrarFantasmaDevorado()
+        {
+            int pts = 200 * (1 << Mathf.Clamp(m_FantasmasComidosNoCiclo, 0, 3));
+            m_FantasmasComidosNoCiclo++;
+            return pts;
         }
 
         /// <summary>

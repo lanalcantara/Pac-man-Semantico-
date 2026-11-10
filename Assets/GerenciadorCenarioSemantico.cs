@@ -40,10 +40,21 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
         ProtegeWebSocket8085,
         ArquivoJson,
         ArquivoOwl,
-        GrafoOntologicoVirtOnto,
+        GrafoOntologicoPacMan,
         InjecaoExternaDinamica,
         BackendJavaSpringBoot
     }
+
+    public enum TipoTemaLabirinto
+    {
+        DarkGridNeon = 0,
+        ClassicoVerdeCinza = 1,
+        EspecialNatal = 2
+    }
+
+    [Header("Tema Visual do Labirinto")]
+    [Tooltip("Tema estético ativo do labirinto (Dark Grid Neon, Clássico Verde/Cinza, ou Especial de Natal).")]
+    public TipoTemaLabirinto temaAtual = TipoTemaLabirinto.DarkGridNeon;
 
     [Header("Identidade do Projeto")]
     [Tooltip("Nome oficial do sistema.")]
@@ -103,6 +114,10 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
     [Tooltip("Prefab opcional para gemas especiais (Power Pellet).")]
     public GameObject prefabGemaEspecial;
 
+    [Header("Estética Visual")]
+    [Tooltip("Se verdadeiro, aplica a textura wireframe de grade emissiva Dark Grid. Se falso, mantém paredes e chão limpos e sólidos.")]
+    public bool usarEsteticaDarkGrid = true;
+
     [Header("Wayfinding Semântico (Placas de Sinalização TBox)")]
     [Tooltip("Ativa a detecção de bifurcações/entradas de corredor e instanciação de Placas de Sinalização Semântica.")]
     public bool instanciarPlacasSinalizacao = true;
@@ -141,18 +156,35 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
     [Tooltip("Gera as paredes físicas perimetrais e internas do labirinto.")]
     public bool instanciarLabirinto3D = true;
 
-    [Tooltip("Altura das paredes 3D do labirinto (estética Dark Grid Retrowave).")]
-    public float alturaParedes = 1.15f;
+    [Tooltip("Altura das paredes 3D do labirinto (mais alta para imersão total nos corredores).")]
+    public float alturaParedes = 2.60f;
+
+    [Header("Visibilidade de Entidades (Fase de Validação de Navegação)")]
+    [Tooltip("Se falso, oculta/não instancia gemas, power pellets e cerejas temporariamente.")]
+    public bool instanciarGemas = true;
+
+    [Tooltip("Se falso, oculta/não instancia fantasmas e obstáculos temporariamente.")]
+    public bool instanciarFantasmas = true;
     // Spawns dos 4 Fantasmas estritamente dentro da Gaiola Central do Labirinto (Y = 0.0f Snap no Chao)
     private int m_ContadorSpawnFantasmas = 0;
     private int m_ContadorFantasmasConfigurados = 0;
-    private static readonly Vector3[] s_SpawnsGaiolaCentral = new Vector3[]
+    public static readonly Vector3[] s_SpawnsGaiolaCentral = new Vector3[]
     {
-        new Vector3(-1.0f, 0.0f, 0.0f),   // Blinky (Vermelho) - Gaiola Central
-        new Vector3(1.0f, 0.0f, 0.0f),    // Pinky (Rosa) - Gaiola Central
-        new Vector3(-1.0f, 0.0f, -1.2f),  // Inky (Azul) - Gaiola Central
-        new Vector3(1.0f, 0.0f, -1.2f)    // Clyde (Laranja) - Gaiola Central
+        new Vector3(0.0f, 0.0f, 0.6f),    // Blinky (Vermelho) - Slot Norte (Porta)
+        new Vector3(-1.2f, 0.0f, -0.4f),  // Pinky (Rosa) - Slot Oeste
+        new Vector3(0.0f, 0.0f, -0.8f),   // Inky (Ciano) - Slot Sul Central
+        new Vector3(1.2f, 0.0f, -0.4f)    // Clyde (Laranja) - Slot Leste
     };
+
+    public static readonly float[] s_AtrasosSaidaGaiola = new float[]
+    {
+        0.0f,  // Blinky - sai imediatamente ao começar
+        4.0f,  // Pinky - sai após 4s
+        8.0f,  // Inky - sai após 8s
+        12.0f  // Clyde - sai após 12s
+    };
+
+    public static readonly Vector3 s_PosicaoSaidaGaiola = new Vector3(0f, 0f, 1.8f);
 
     // Cores canônicas vibrantes dos 4 Fantasmas clássicos (Vermelho, Rosa, Azul, Laranja)
     public static readonly Color[] CoresClassicasFantasmas = new Color[]
@@ -212,6 +244,13 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
     };
 
     private GameObject m_ContainerParedes;
+        // Contêineres de decorações perimétricas 360° por tema
+    private GameObject m_TotemCInPortao;
+    private GameObject m_ContainerDecoracoesGrid;
+    private GameObject m_PrefabPacmanGhost;
+    private GameObject m_PrefabArcade;
+    private GameObject m_ContainerDecoracoesClassico;
+    private GameObject m_ContainerDecoracoesNatal;
 
     [Header("Status do Grafo Ontológico (VirtOnto C#)")]
     [SerializeField] private string m_NomeOntologiaAtiva = "Pac-Man Semantic Ontology";
@@ -220,13 +259,43 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
     [SerializeField] private int m_TotalNosGrafo = 0;
     [SerializeField] private int m_TotalArestasGrafo = 0;
 
+    public static GerenciadorCenarioSemantico Instancia { get; private set; }
+
+    // Missão sequencial de orbes ontológicas (1 de cada vez, spawn aleatório nos corredores)
+    private readonly List<Node> m_FilaNodosOrbes = new List<Node>();
+    private int m_IndiceOrbeAtual = 0;
+    private int m_TotalOrbesSequencia = 12;
+    private GameObject m_OrbeAtivaAtual = null;
+
+    // Coordenadas verificadas de corredores navegáveis do labirinto clássico
+    public static readonly Vector2[] s_CorredoresLabirinto = new Vector2[]
+    {
+        new Vector2(0f, 3.5f),
+        new Vector2(0f, 7.0f),
+        new Vector2(0f, -7.0f),
+        new Vector2(-5.5f, 0f),
+        new Vector2(5.5f, 0f),
+        new Vector2(-5.5f, 3.5f),
+        new Vector2(5.5f, 3.5f),
+        new Vector2(-5.5f, -4.0f),
+        new Vector2(5.5f, -4.0f),
+        new Vector2(-8.5f, 3.5f),
+        new Vector2(8.5f, 3.5f),
+        new Vector2(-8.5f, -3.5f),
+        new Vector2(8.5f, -3.5f),
+        new Vector2(-3.5f, 8.5f),
+        new Vector2(3.5f, 8.5f),
+        new Vector2(-3.5f, -8.5f),
+        new Vector2(3.5f, -8.5f)
+    };
+
     // Coleções ativas do labirinto
     private readonly List<IInstanciaSemantica> m_InstanciasSemanticas = new List<IInstanciaSemantica>();
     private readonly List<GameObject> m_ObjetosInstanciados = new List<GameObject>();
     private readonly List<Vector3> m_PosicoesOcupadas = new List<Vector3>();
     private readonly List<PlacaSinalizacaoSemantica> m_PlacasWayfinding = new List<PlacaSinalizacaoSemantica>();
 
-    // Taxonomia dinâmica agnóstica de domínio (alimentada pelo Grafo VirtOnto ou WebSocket 8085)
+    // Taxonomia dinâmica agnóstica de domínio (alimentada pelo Grafo Ontológico ou WebSocket 8085)
     private string[] m_SuperclassesAtivas = new string[] { "Parasitas", "Hospedeiros" };
     private string[] m_SubclassesAtivas = new string[] { "Nematoda", "Platyhelminthes", "Human", "SmallIntestine", "FecalOral", "AntiparasiticTreatment" };
 
@@ -256,11 +325,32 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
 
     private void Awake()
     {
+        Instancia = this;
+        alturaParedes = 2.60f;
+        usarEsteticaDarkGrid = true;
+        instanciarPlacasSinalizacao = true;
+        instanciarGemas = true;
+        instanciarFantasmas = true;
+
         CarregarPrefabsAutomaticamente();
         LocalizarPlanoChao();
         GarantirNavMeshSurface();
         InicializarMotorRaciocinio();
         InicializarApiClient();
+        GarantirPainelGrafo();
+    }
+
+    private void GarantirPainelGrafo()
+    {
+        if (PainelGrafoSemanticoProtege.Instancia == null)
+        {
+            var p = FindAnyObjectByType<PainelGrafoSemanticoProtege>();
+            if (p == null)
+            {
+                GameObject obj = new GameObject("PainelGrafoSemanticoProtege");
+                obj.AddComponent<PainelGrafoSemanticoProtege>();
+            }
+        }
     }
 
     private void OnEnable()
@@ -311,19 +401,69 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
 
     private void Start()
     {
+        alturaParedes = 2.60f;
+        usarEsteticaDarkGrid = true;
+        instanciarPlacasSinalizacao = true;
+        instanciarGemas = true;
+        instanciarFantasmas = true;
+
         ConfigurarIluminacaoSciFi();
-        if (Application.isPlaying)
+        GerarInstanciasOntologicas();
+        AplicarTemaLabirinto(temaAtual);
+    }
+
+    /// <summary>
+    /// Oculta temporariamente gemas, power pellets, cerejas, fantasmas e placas
+    /// para foco exclusivo na validação de mapa e movimentação.
+    /// </summary>
+    public void OcultarEntidadesTemporarias()
+    {
+        if (!instanciarGemas)
         {
-            try
+            var gemas = FindObjectsByType<GemaValidaSemantica>(FindObjectsInactive.Include);
+            for (int i = 0; i < gemas.Length; i++)
             {
-                SemanticHUDManager.GarantirHUDAtivoNaCena();
+                if (gemas[i] != null) gemas[i].gameObject.SetActive(false);
             }
-            catch (Exception ex)
+            var pellets = FindObjectsByType<PowerPelletIndividualSemantico>(FindObjectsInactive.Include);
+            for (int i = 0; i < pellets.Length; i++)
             {
-                Debug.LogWarning($"[GerenciadorCenarioSemantico] Aviso ao inicializar HUD: {ex.Message}");
+                if (pellets[i] != null) pellets[i].gameObject.SetActive(false);
+            }
+            var cerejas = FindObjectsByType<CerejaObjetoSemantico>(FindObjectsInactive.Include);
+            for (int i = 0; i < cerejas.Length; i++)
+            {
+                if (cerejas[i] != null) cerejas[i].gameObject.SetActive(false);
+            }
+            var fugitivas = FindObjectsByType<GemaFugitiva>(FindObjectsInactive.Include);
+            for (int i = 0; i < fugitivas.Length; i++)
+            {
+                if (fugitivas[i] != null) fugitivas[i].gameObject.SetActive(false);
             }
         }
-        GerarInstanciasOntologicas();
+
+        if (!instanciarFantasmas)
+        {
+            var obstaculos = FindObjectsByType<ObstaculoInvalidoSemantico>(FindObjectsInactive.Include);
+            for (int i = 0; i < obstaculos.Length; i++)
+            {
+                if (obstaculos[i] != null) obstaculos[i].gameObject.SetActive(false);
+            }
+            var animFantasmas = FindObjectsByType<AnimacaoFantasma>(FindObjectsInactive.Include);
+            for (int i = 0; i < animFantasmas.Length; i++)
+            {
+                if (animFantasmas[i] != null) animFantasmas[i].gameObject.SetActive(false);
+            }
+        }
+
+        if (!instanciarPlacasSinalizacao)
+        {
+            var placas = FindObjectsByType<PlacaSinalizacaoSemantica>(FindObjectsInactive.Include);
+            for (int i = 0; i < placas.Length; i++)
+            {
+                if (placas[i] != null) placas[i].gameObject.SetActive(false);
+            }
+        }
     }
 
 #if UNITY_EDITOR
@@ -398,9 +538,9 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
 
         switch (origemDados)
         {
-            case OrigemDadosOntologia.GrafoOntologicoVirtOnto:
-                Debug.Log("<color=#00DDFF><b>[Pac-Man Semântico - VirtOnto C#]</b></color> Construindo e consumindo Grafo Ontológico VirtOnto...");
-                GrafoOntologico = ConstruirGrafoVirtOntoPadrao();
+            case OrigemDadosOntologia.GrafoOntologicoPacMan:
+                Debug.Log("<color=#00DDFF><b>[Pac-Man Semântico C#]</b></color> Construindo e consumindo Grafo Ontológico VirtOnto...");
+                GrafoOntologico = ConstruirGrafoOntologicoPadrao();
                 cenario = GrafoOntologico.ToCenarioDTO();
                 break;
 
@@ -478,7 +618,7 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
     }
 
     /// <summary>
-    /// API Modular orientada a objetos: Constrói o Grafo VirtOnto e instancia o cenário físico no Unity.
+    /// API Modular orientada a objetos: Constrói o Grafo Ontológico e instancia o cenário físico no Unity.
     /// </summary>
     public void CarregarCenarioDeDados(CenarioSemanticoDTO cenario)
     {
@@ -515,7 +655,7 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
         navSurface.BuildNavMesh();
         Debug.Log("<color=#00FF99><b>[NavMesh Dinâmico]</b></color> Malha de navegação gerada em tempo de execução com BuildNavMesh() após instanciação de paredes e chão.");
 
-        // 1. Espelhamento formal: Constrói e indexa o Grafo VirtOnto a partir do DTO
+        // 1. Espelhamento formal: Constrói e indexa o Grafo Ontológico a partir do DTO
         GrafoOntologico.BuildFromCenarioDTO(cenario);
         m_TotalNosGrafo = GrafoOntologico.GetNodeCount();
         m_TotalArestasGrafo = GrafoOntologico.GetEdgeCount();
@@ -526,40 +666,58 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
         int contadorValidos = 0;
         int contadorInvalidos = 0;
 
-        // 2. Instanciação física robusta no labirinto gerenciada a partir dos nós do Grafo VirtOnto
+        // 2. Separação de Nodos: Fantasmas são instanciados na gaiola; Orbes são enfileiradas para spawn sequencial (1 a 1)
+        m_FilaNodosOrbes.Clear();
         var nosIndividuos = GrafoOntologico.GetNodesByType(NodeType.INDIVIDUAL);
         foreach (var node in nosIndividuos)
         {
             if (node == null) continue;
-
-            DadoInstanciaSemantica dado = new DadoInstanciaSemantica
+            if (node.IsValid)
             {
-                id = node.Id,
-                classeOntologica = string.IsNullOrEmpty(node.ConceptClass) ? node.Label : node.ConceptClass,
-                expressaoDL = node.DLExpression,
-                ehValida = node.IsValid,
-                posicao = node.Position,
-                valorPontuacao = node.ScoreValue,
-                descricaoSemantica = node.SemanticDescription,
-                corDestaque = node.HighlightColor
-            };
-
-            GameObject objInstanciado = InstanciarObjetoSemantico(dado);
-            if (objInstanciado != null)
-            {
-                m_ObjetosInstanciados.Add(objInstanciado);
-                node.GameObjectInstance = objInstanciado;
-                node.Position = objInstanciado.transform.position;
-
-                IInstanciaSemantica instSemantica = objInstanciado.GetComponent<IInstanciaSemantica>();
-                if (instSemantica != null)
+                if (instanciarGemas)
                 {
-                    m_InstanciasSemanticas.Add(instSemantica);
+                    m_FilaNodosOrbes.Add(node);
                 }
-
-                if (node.IsValid) contadorValidos++;
-                else contadorInvalidos++;
             }
+            else if (instanciarFantasmas)
+            {
+                DadoInstanciaSemantica dado = new DadoInstanciaSemantica
+                {
+                    id = node.Id,
+                    classeOntologica = string.IsNullOrEmpty(node.ConceptClass) ? node.Label : node.ConceptClass,
+                    expressaoDL = node.DLExpression,
+                    ehValida = false,
+                    posicao = node.Position,
+                    valorPontuacao = node.ScoreValue,
+                    descricaoSemantica = node.SemanticDescription,
+                    corDestaque = node.HighlightColor
+                };
+
+                GameObject objInstanciado = InstanciarObjetoSemantico(dado);
+                if (objInstanciado != null)
+                {
+                    m_ObjetosInstanciados.Add(objInstanciado);
+                    node.GameObjectInstance = objInstanciado;
+                    node.Position = objInstanciado.transform.position;
+
+                    IInstanciaSemantica instSemantica = objInstanciado.GetComponent<IInstanciaSemantica>();
+                    if (instSemantica != null)
+                    {
+                        m_InstanciasSemanticas.Add(instSemantica);
+                    }
+                    contadorInvalidos++;
+                }
+            }
+        }
+
+        m_TotalOrbesSequencia = m_FilaNodosOrbes.Count;
+        InstanciaSemanticaBase.instanciasValidasRestantes = m_TotalOrbesSequencia;
+        m_IndiceOrbeAtual = 0;
+
+        if (instanciarGemas && m_FilaNodosOrbes.Count > 0)
+        {
+            SpawnarOrbeAtual();
+            contadorValidos = 1;
         }
 
         InstanciarCerejasEPowerPellets();
@@ -576,7 +734,7 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
         }
 
         // 3. Avaliação inicial de regras SWRL sobre o grafo instanciado
-        GrafoOntologico.AvaliarRegrasSWRL(msg => Debug.Log($"<color=#9B59B6><b>[VirtOnto SWRL]</b></color> {msg}"));
+        GrafoOntologico.AvaliarRegrasSWRL(msg => Debug.Log($"<color=#9B59B6><b>[Pac-Man Semântico SWRL]</b></color> {msg}"));
 
         // 4. Conecta e sincroniza o Grafo Ontológico com o Motor de Raciocínio Semântico
         if (motorRaciocinio != null)
@@ -584,9 +742,131 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
             motorRaciocinio.SetSemanticGraph(GrafoOntologico);
         }
 
+        ConfigurarIluminacaoSciFi();
+        AplicarMaterialChaoLaboratorio();
+
         Debug.Log($"<color=#00FF99><b>[Pac-Man Semântico CIn-UFPE]</b></color> Cenário '<b>{m_NomeOntologiaAtiva}</b>' ({m_VersaoAxiomas}) instanciado com sucesso!\n" +
                   $"• Instâncias Físicas: {m_TotalInstanciasInstanciadas} ({contadorValidos} Gemas Válidas / {contadorInvalidos} Obstáculos/Fantasmas)\n" +
-                  $"• Grafo VirtOnto: {m_TotalNosGrafo} Nós (Classes TBox + Indivíduos ABox) / {m_TotalArestasGrafo} Arestas (OWL/SWRL).");
+                  $"• Grafo Ontológico: {m_TotalNosGrafo} Nós (Classes TBox + Indivíduos ABox) / {m_TotalArestasGrafo} Arestas (OWL/SWRL).");
+    }
+
+    /// <summary>
+    /// Spawna a orbe ontológica da etapa atual da missão sequencial.
+    /// Spawna 1 orbe por vez em um corredor aleatório do labirinto afastado do Pac-Man.
+    /// Aplica a regra: estritamente 1 a cada 3 orbes concede o poder de devorar fantasmas!
+    /// </summary>
+    public void SpawnarOrbeAtual()
+    {
+        if (m_IndiceOrbeAtual >= m_FilaNodosOrbes.Count)
+        {
+            Debug.Log("<color=#00FF99><b>[VITÓRIA COMPLETA]</b></color> Todas as 12 orbes foram coletadas com sucesso!");
+            if (HubInicialAmbiente.Instancia != null)
+            {
+                HubInicialAmbiente.Instancia.ExibirVitoria(InstanciaSemanticaBase.pontuacaoLogica, m_TotalOrbesSequencia);
+            }
+            if (PainelGrafoSemanticoProtege.Instancia != null)
+            {
+                PainelGrafoSemanticoProtege.Instancia.ExibirFluxogramaCompletoVitoria();
+            }
+            return;
+        }
+
+        Node node = m_FilaNodosOrbes[m_IndiceOrbeAtual];
+        bool ehOrbeDePoder = ((m_IndiceOrbeAtual + 1) % 3 == 0);
+
+        // Seleciona um corredor seguro aleatório a pelo menos 5 metros do Pac-Man
+        Vector3 posPac = new Vector3(0f, 0f, -5f);
+        var ctrl = FindFirstObjectByType<ControladorXRJogador>();
+        if (ctrl != null) posPac = ctrl.transform.position;
+
+        List<Vector2> corredoresCandidatos = new List<Vector2>();
+        for (int i = 0; i < s_CorredoresLabirinto.Length; i++)
+        {
+            Vector2 c = s_CorredoresLabirinto[i];
+            float dist = Vector2.Distance(new Vector2(posPac.x, posPac.z), c);
+            if (dist >= 4.8f)
+            {
+                corredoresCandidatos.Add(c);
+            }
+        }
+        if (corredoresCandidatos.Count == 0)
+        {
+            corredoresCandidatos.AddRange(s_CorredoresLabirinto);
+        }
+
+        Vector2 corredorEscolhido = corredoresCandidatos[UnityEngine.Random.Range(0, corredoresCandidatos.Count)];
+        Vector3 posSpawn = new Vector3(corredorEscolhido.x, 0.42f, corredorEscolhido.y);
+
+        DadoInstanciaSemantica dado = new DadoInstanciaSemantica
+        {
+            id = node.Id,
+            classeOntologica = string.IsNullOrEmpty(node.ConceptClass) ? node.Label : node.ConceptClass,
+            expressaoDL = node.DLExpression,
+            ehValida = true,
+            posicao = posSpawn,
+            valorPontuacao = ehOrbeDePoder ? 50 : 20,
+            descricaoSemantica = node.SemanticDescription,
+            corDestaque = ehOrbeDePoder ? new Color(1.0f, 0.85f, 0.0f, 1.0f) : new Color(0.0f, 0.90f, 1.0f, 0.8f)
+        };
+
+        GameObject objInstanciado = InstanciarObjetoSemantico(dado);
+        if (objInstanciado != null)
+        {
+            objInstanciado.transform.position = posSpawn;
+            m_OrbeAtivaAtual = objInstanciado;
+            m_ObjetosInstanciados.Add(objInstanciado);
+            node.GameObjectInstance = objInstanciado;
+            node.Position = posSpawn;
+
+            var gema = objInstanciado.GetComponent<GemaValidaSemantica>();
+            if (gema != null)
+            {
+                gema.ehOrbeDePoder = ehOrbeDePoder;
+                gema.indiceOrbe = m_IndiceOrbeAtual + 1;
+                gema.totalOrbes = m_TotalOrbesSequencia;
+                gema.raioCaptura = 0.35f;
+
+                if (ehOrbeDePoder)
+                {
+                    // Visual radiante dourado / aura especial de poder
+                    var rend = objInstanciado.GetComponentInChildren<Renderer>();
+                    if (rend != null)
+                    {
+                        rend.material = CriarMaterialTranslúcidoNodo(new Color(1.0f, 0.82f, 0.0f, 1.0f), 0.92f);
+                    }
+                    var luz = objInstanciado.GetComponentInChildren<Light>();
+                    if (luz != null)
+                    {
+                        luz.color = new Color(1.0f, 0.85f, 0.0f);
+                        luz.intensity = 4.0f;
+                        luz.range = 4.5f;
+                    }
+                }
+            }
+
+            IInstanciaSemantica instSemantica = objInstanciado.GetComponent<IInstanciaSemantica>();
+            if (instSemantica != null)
+            {
+                m_InstanciasSemanticas.Add(instSemantica);
+            }
+
+            if (PainelGrafoSemanticoProtege.Instancia != null)
+            {
+                string label = string.IsNullOrEmpty(node.Label) ? node.Id : node.Label;
+                PainelGrafoSemanticoProtege.Instancia.DefinirAlvoOrbe(objInstanciado.transform, m_IndiceOrbeAtual + 1, m_TotalOrbesSequencia, ehOrbeDePoder, label);
+            }
+
+            Debug.Log($"<color=#00E5FF><b>[Missão Sequencial]</b></color> Orbe #{m_IndiceOrbeAtual + 1} / {m_TotalOrbesSequencia} spawnada em {posSpawn} (Orbe de Poder: {ehOrbeDePoder})");
+        }
+    }
+
+    /// <summary>
+    /// Notificação recebida ao capturar uma orbe ontológica válida: avança para a próxima da lista!
+    /// </summary>
+    public void NotificarOrbeColetada(GemaValidaSemantica gema)
+    {
+        m_IndiceOrbeAtual++;
+        SpawnarOrbeAtual();
     }
 
     // =========================================================================
@@ -613,13 +893,13 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
             posicaoPlana.x = Mathf.Clamp(posicaoPlana.x, -2.2f, 2.2f);
             posicaoPlana.z = Mathf.Clamp(posicaoPlana.z, -2.0f, 1.5f);
         }
-        else if (dado.posicao == Vector3.zero || !VerificarPosicaoLivreDeParedes(dado.posicao) || m_PosicoesOcupadas.Count == 0)
+        else if (dado.posicao != Vector3.zero)
         {
-            posicaoPlana = ObterPosicaoValidaNoChao(true);
+            posicaoPlana = dado.posicao;
         }
         else
         {
-            posicaoPlana = dado.posicao;
+            posicaoPlana = ObterPosicaoValidaNoChao(true);
         }
 
         m_PosicoesOcupadas.Add(posicaoPlana);
@@ -1154,20 +1434,40 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
             rb.useGravity = false;
         }
 
-        // Vincula a implementacao de IInstanciaSemantica
-        IInstanciaSemantica instSemantica = obj.GetComponent<IInstanciaSemantica>();
-        if (instSemantica == null)
+        // Vincula a implementação especializada de IInstanciaSemantica (GemaValidaSemantica ou ObstaculoInvalidoSemantico)
+        IInstanciaSemantica instSemantica;
+        if (dado.ehValida)
         {
-            if (dado.ehValida)
+            GemaValidaSemantica gema = obj.GetComponent<GemaValidaSemantica>();
+            if (gema == null)
             {
-                GemaValidaSemantica gema = obj.AddComponent<GemaValidaSemantica>();
-                instSemantica = gema;
+                GerenciadorInstancia gi = obj.GetComponent<GerenciadorInstancia>();
+                if (gi != null)
+                {
+                    if (Application.isPlaying) Destroy(gi); else DestroyImmediate(gi);
+                }
+                gema = obj.AddComponent<GemaValidaSemantica>();
             }
-            else
+            instSemantica = gema;
+        }
+        else
+        {
+            ObstaculoInvalidoSemantico obs = obj.GetComponent<ObstaculoInvalidoSemantico>();
+            if (obs == null)
             {
-                ObstaculoInvalidoSemantico obs = obj.AddComponent<ObstaculoInvalidoSemantico>();
-                instSemantica = obs;
+                GerenciadorInstancia gi = obj.GetComponent<GerenciadorInstancia>();
+                if (gi != null)
+                {
+                    if (Application.isPlaying) Destroy(gi); else DestroyImmediate(gi);
+                }
+                obs = obj.AddComponent<ObstaculoInvalidoSemantico>();
             }
+            instSemantica = obs;
+
+            int ghostIdx = (m_ContadorFantasmasConfigurados) % s_SpawnsGaiolaCentral.Length;
+            obs.posicaoSlotGaiola = s_SpawnsGaiolaCentral[ghostIdx];
+            obs.posicaoSaidaGaiola = s_PosicaoSaidaGaiola;
+            obs.tempoAtrasoSaidaGaiola = s_AtrasosSaidaGaiola[ghostIdx];
         }
 
         instSemantica.InicializarSemantica(dado);
@@ -1411,23 +1711,23 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
         return mat;
     }
 
-        private GameObject CriarObstaculoProcedural(Vector3 posicao, DadoInstanciaSemantica dado = null)
+    private GameObject CriarObstaculoProcedural(Vector3 posicao, DadoInstanciaSemantica dado = null)
     {
-        // Trava matemática de segurança: nascimento rigoroso no interior da gaiola central
-        posicao.x = Mathf.Clamp(posicao.x, -2.2f, 2.2f);
-        posicao.z = Mathf.Clamp(posicao.z, -2.0f, 1.5f);
-
         int ghostIdx = (m_ContadorFantasmasConfigurados) % CoresClassicasFantasmas.Length;
         string nomeGhost = NomesFantasmasClassicos[ghostIdx];
+        Color corGhost = CoresClassicasFantasmas[ghostIdx];
+        Vector3 slotGaiola = s_SpawnsGaiolaCentral[ghostIdx];
+        float atrasoSaida = s_AtrasosSaidaGaiola[ghostIdx];
 
         GameObject fantasma = new GameObject($"ReasonerAgent_{nomeGhost}");
-        fantasma.transform.position = posicao;
+        fantasma.transform.position = slotGaiola;
         fantasma.transform.SetParent(transform);
 
         // Personagem em escala adequada ao corredor: 0.80f
         fantasma.transform.localScale = new Vector3(0.80f, 0.80f, 0.80f);
 
-        Material matCorpo = CriarMaterialTranslúcidoNodo(new Color(0.10f, 0.55f, 1.0f, 1f), 0.52f);
+        // Material com a cor canônica clássica do fantasma (Blinky Vermelho, Pinky Rosa, Inky Ciano, Clyde Laranja)
+        Material matCorpo = CriarMaterialTranslúcidoNodo(corGhost, 0.72f);
 
         // 1. CORPO EM FORMA DE CÁPSULA (CAPSULE) CONFORME EXIGÊNCIA ESTRITA
         GameObject corpoCapsula = GameObject.CreatePrimitive(PrimitiveType.Capsule);
@@ -1438,42 +1738,42 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
         Destroy(corpoCapsula.GetComponent<Collider>());
         corpoCapsula.GetComponent<Renderer>().material = matCorpo;
 
-        // 2. DOIS OLHOS BRANCOS MENORES COM PUPILAS AZUIS (LOOK DIRECIONAL)
+        // 2. DOIS OLHOS BRANCOS EMBUTIDOS DIRETAMENTE NO ROSTO (LOOK RETRÔ ARCADE FIRME, SEM PONTINHOS SOLTOS)
         Shader shaderUnlit = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Color") ?? Shader.Find("Standard");
-        Material matOlho = new Material(shaderUnlit) { color = Color.white };
-        Material matPupila = new Material(shaderUnlit) { color = new Color(0.05f, 0.20f, 0.95f) };
+        Material matOlho = new Material(shaderUnlit) { name = "Mat_Olho_Branco", color = Color.white };
+        Material matPupila = new Material(shaderUnlit) { name = "Mat_Pupila_AzulMarinho", color = new Color(0.04f, 0.12f, 0.65f) };
 
-        // Olho Esquerdo (Esfera Branca Menor)
+        // Olho Esquerdo (Esfera achatada embutida na frente da cabeça do fantasma)
         GameObject olhoEsq = GameObject.CreatePrimitive(PrimitiveType.Sphere);
         olhoEsq.name = "OlhoEsquerdo";
         olhoEsq.transform.SetParent(fantasma.transform, false);
-        olhoEsq.transform.localPosition = new Vector3(-0.20f, 0.62f, 0.32f);
-        olhoEsq.transform.localScale = new Vector3(0.24f, 0.28f, 0.20f);
+        olhoEsq.transform.localPosition = new Vector3(-0.16f, 0.54f, 0.28f);
+        olhoEsq.transform.localScale = new Vector3(0.18f, 0.22f, 0.08f);
         Destroy(olhoEsq.GetComponent<Collider>());
         olhoEsq.GetComponent<Renderer>().material = matOlho;
 
         GameObject pupilaEsq = GameObject.CreatePrimitive(PrimitiveType.Sphere);
         pupilaEsq.name = "PupilaEsquerda";
         pupilaEsq.transform.SetParent(olhoEsq.transform, false);
-        pupilaEsq.transform.localPosition = new Vector3(0f, 0f, 0.35f);
-        pupilaEsq.transform.localScale = new Vector3(0.50f, 0.50f, 0.50f);
+        pupilaEsq.transform.localPosition = new Vector3(0f, 0f, 0.035f);
+        pupilaEsq.transform.localScale = new Vector3(0.50f, 0.50f, 0.20f);
         Destroy(pupilaEsq.GetComponent<Collider>());
         pupilaEsq.GetComponent<Renderer>().material = matPupila;
 
-        // Olho Direito (Esfera Branca Menor)
+        // Olho Direito (Esfera achatada embutida na frente da cabeça do fantasma)
         GameObject olhoDir = GameObject.CreatePrimitive(PrimitiveType.Sphere);
         olhoDir.name = "OlhoDireito";
         olhoDir.transform.SetParent(fantasma.transform, false);
-        olhoDir.transform.localPosition = new Vector3(0.20f, 0.62f, 0.32f);
-        olhoDir.transform.localScale = new Vector3(0.24f, 0.28f, 0.20f);
+        olhoDir.transform.localPosition = new Vector3(0.16f, 0.54f, 0.28f);
+        olhoDir.transform.localScale = new Vector3(0.18f, 0.22f, 0.08f);
         Destroy(olhoDir.GetComponent<Collider>());
         olhoDir.GetComponent<Renderer>().material = matOlho;
 
         GameObject pupilaDir = GameObject.CreatePrimitive(PrimitiveType.Sphere);
         pupilaDir.name = "PupilaDireita";
         pupilaDir.transform.SetParent(olhoDir.transform, false);
-        pupilaDir.transform.localPosition = new Vector3(0f, 0f, 0.35f);
-        pupilaDir.transform.localScale = new Vector3(0.50f, 0.50f, 0.50f);
+        pupilaDir.transform.localPosition = new Vector3(0f, 0f, 0.035f);
+        pupilaDir.transform.localScale = new Vector3(0.50f, 0.50f, 0.20f);
         Destroy(pupilaDir.GetComponent<Collider>());
         pupilaDir.GetComponent<Renderer>().material = matPupila;
 
@@ -1482,29 +1782,36 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
         anim.pupilaDireita = pupilaDir.transform;
         anim.permitirFlutuacao = false;
 
-        // NavMeshAgent para locomoção suave pelos corredores
+        // NavMeshAgent para locomoção suave pelos corredores (inicia desligado até concluir nascimento e sair da gaiola)
         UnityEngine.AI.NavMeshAgent agent = fantasma.AddComponent<UnityEngine.AI.NavMeshAgent>();
-        agent.speed = 2.6f;
+        agent.speed = 2.4f;
         agent.acceleration = 12f;
         agent.radius = 0.28f;
         agent.height = 1.0f;
         agent.stoppingDistance = 0.2f;
         agent.autoBraking = false;
         agent.baseOffset = 0f;
+        agent.avoidancePriority = 30 + ghostIdx * 10;
         agent.enabled = false;
 
-        if (UnityEngine.AI.NavMesh.SamplePosition(posicao, out UnityEngine.AI.NavMeshHit hitFantasma, 1.2f, UnityEngine.AI.NavMesh.AllAreas))
-        {
-            fantasma.transform.position = hitFantasma.position;
-            agent.enabled = true;
-            agent.Warp(hitFantasma.position);
-        }
-        else
-        {
-            fantasma.transform.position = posicao;
-            agent.enabled = true;
-            agent.Warp(posicao);
-        }
+        // Colisor Trigger para interação limpa
+        SphereCollider col = fantasma.AddComponent<SphereCollider>();
+        col.isTrigger = true;
+        col.radius = 0.45f;
+        col.center = new Vector3(0f, 0.5f, 0f);
+
+        // Rigidbody cinemático
+        Rigidbody rb = fantasma.AddComponent<Rigidbody>();
+        rb.isKinematic = true;
+        rb.useGravity = false;
+
+        // Componente semântico com controle de gaiola, nascimento procedural e dano
+        ObstaculoInvalidoSemantico obs = fantasma.AddComponent<ObstaculoInvalidoSemantico>();
+        if (dado != null) obs.InicializarSemantica(dado);
+        obs.ConfigurarSpawnGaiola(slotGaiola, atrasoSaida, s_PosicaoSaidaGaiola);
+
+        // Luz de destaque colorida
+        AnexarLuzPontualDestaque(fantasma, corGhost, 2.8f, 1.3f);
 
         m_ContadorFantasmasConfigurados++;
         return fantasma;
@@ -1518,15 +1825,17 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
         {
             GameObject pacInst = Instantiate(prefabPac, posicao, Quaternion.identity, transform);
             pacInst.name = "PacMan_Jogador";
-            pacInst.transform.localScale = new Vector3(0.80f, 0.80f, 0.80f);
+            pacInst.transform.localScale = new Vector3(0.85f, 0.85f, 0.85f);
             return pacInst;
         }
 
-        // 2. Modelo Procedural autêntico do Pac-Man com mandíbulas articuladas, olhos e material Amarelo Brilhante
-        GameObject pacObj = new GameObject("PacMan_Procedural");
+        // 2. Modelo Procedural autêntico do Pac-Man: Esfera Clássica Perfeita Amarela Brilhante
+        GameObject pacObj = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        pacObj.name = "PacMan_Procedural";
         pacObj.transform.position = posicao;
         pacObj.transform.SetParent(transform);
-        pacObj.transform.localScale = new Vector3(0.80f, 0.80f, 0.80f);
+        pacObj.transform.localScale = new Vector3(0.85f, 0.85f, 0.85f);
+        Destroy(pacObj.GetComponent<Collider>());
 
         // Material Amarelo Brilhante Clássico
         Material matPac = Resources.Load<Material>("Mat_PacMan_Amarelo");
@@ -1541,47 +1850,9 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
             Color amarelo = new Color(1.0f, 0.92f, 0.0f);
             matPac = CriarMaterialDinamico(amarelo, amarelo * 1.5f, 0.95f);
         }
-
-        // Mandíbula Superior
-        GameObject mandSup = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        mandSup.name = "MandibulaSuperior";
-        mandSup.transform.SetParent(pacObj.transform, false);
-        mandSup.transform.localPosition = new Vector3(0f, 0.12f, 0f);
-        mandSup.transform.localScale = new Vector3(0.9f, 0.55f, 0.9f);
-        Destroy(mandSup.GetComponent<Collider>());
-        mandSup.GetComponent<Renderer>().material = matPac;
-
-        // Mandíbula Inferior
-        GameObject mandInf = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        mandInf.name = "MandibulaInferior";
-        mandInf.transform.SetParent(pacObj.transform, false);
-        mandInf.transform.localPosition = new Vector3(0f, -0.12f, 0f);
-        mandInf.transform.localScale = new Vector3(0.9f, 0.55f, 0.9f);
-        Destroy(mandInf.GetComponent<Collider>());
-        mandInf.GetComponent<Renderer>().material = matPac;
-
-        // Olhos expressivos do Pac-Man
-        Material matOlho = new Material(Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Color") ?? Shader.Find("Standard")) { color = Color.black };
-        GameObject olhoEsq = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        olhoEsq.name = "Olho_Esq";
-        olhoEsq.transform.SetParent(mandSup.transform, false);
-        olhoEsq.transform.localPosition = new Vector3(-0.25f, 0.35f, 0.25f);
-        olhoEsq.transform.localScale = new Vector3(0.12f, 0.20f, 0.12f);
-        Destroy(olhoEsq.GetComponent<Collider>());
-        olhoEsq.GetComponent<Renderer>().material = matOlho;
-
-        GameObject olhoDir = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        olhoDir.name = "Olho_Dir";
-        olhoDir.transform.SetParent(mandSup.transform, false);
-        olhoDir.transform.localPosition = new Vector3(0.25f, 0.35f, 0.25f);
-        olhoDir.transform.localScale = new Vector3(0.12f, 0.20f, 0.12f);
-        Destroy(olhoDir.GetComponent<Collider>());
-        olhoDir.GetComponent<Renderer>().material = matOlho;
+        pacObj.GetComponent<Renderer>().material = matPac;
 
         AnimacaoBocaPacMan anim = pacObj.AddComponent<AnimacaoBocaPacMan>();
-        anim.mandibulaSuperior = mandSup.transform;
-        anim.mandibulaInferior = mandInf.transform;
-
         return pacObj;
     }
 
@@ -1713,6 +1984,22 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
                            superclasse.IndexOf("Nematod", StringComparison.OrdinalIgnoreCase) >= 0 ||
                            superclasse.IndexOf("Platyhelmint", StringComparison.OrdinalIgnoreCase) >= 0);
 
+        if (!usarEsteticaDarkGrid)
+        {
+            Shader shWall = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard") ?? Shader.Find("Diffuse");
+            Material matParedeLimpa = new Material(shWall);
+            matParedeLimpa.name = $"Mat_Parede_Metalica_{superclasse}";
+            // Parede cinza metálica clara com acabamento industrial que reflete a luz solar da tarde
+            Color corParedeCinza = new Color(0.55f, 0.58f, 0.62f, 1f);
+            if (matParedeLimpa.HasProperty("_BaseColor")) matParedeLimpa.SetColor("_BaseColor", corParedeCinza);
+            if (matParedeLimpa.HasProperty("_Color")) matParedeLimpa.SetColor("_Color", corParedeCinza);
+            if (matParedeLimpa.HasProperty("_Metallic")) matParedeLimpa.SetFloat("_Metallic", 0.65f);
+            if (matParedeLimpa.HasProperty("_Smoothness")) matParedeLimpa.SetFloat("_Smoothness", 0.35f);
+            matParedeLimpa.DisableKeyword("_EMISSION");
+            if (matParedeLimpa.HasProperty("_EmissionColor")) matParedeLimpa.SetColor("_EmissionColor", Color.black);
+            return matParedeLimpa;
+        }
+
         string nomeAssetMat = ehParasita ? "DarkGridMaterial_Parasitas_Roxo" : "DarkGridMaterial_Hospedeiros_Azul";
         Color corSuperclasse = ObterCorTopologiaSuperclasse(superclasse);
 
@@ -1823,6 +2110,22 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
     /// </summary>
     public Material CriarMaterialChaoLaboratorio()
     {
+        if (!usarEsteticaDarkGrid)
+        {
+            Shader shChao = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard") ?? Shader.Find("Diffuse");
+            Material matChaoLimpo = new Material(shChao);
+            matChaoLimpo.name = "Mat_Chao_Grama_Futebol";
+            // Verde vivo como grama de campo de futebol sob a luz da tarde (fosco, natural e agradável)
+            Color corGramaFutebol = new Color(0.22f, 0.58f, 0.25f, 1f);
+            if (matChaoLimpo.HasProperty("_BaseColor")) matChaoLimpo.SetColor("_BaseColor", corGramaFutebol);
+            if (matChaoLimpo.HasProperty("_Color")) matChaoLimpo.SetColor("_Color", corGramaFutebol);
+            if (matChaoLimpo.HasProperty("_Metallic")) matChaoLimpo.SetFloat("_Metallic", 0.0f);
+            if (matChaoLimpo.HasProperty("_Smoothness")) matChaoLimpo.SetFloat("_Smoothness", 0.05f);
+            matChaoLimpo.DisableKeyword("_EMISSION");
+            if (matChaoLimpo.HasProperty("_EmissionColor")) matChaoLimpo.SetColor("_EmissionColor", Color.black);
+            return matChaoLimpo;
+        }
+
         Material matChaoFisico = Resources.Load<Material>("DarkGridMaterial_Chao");
 #if UNITY_EDITOR
         if (matChaoFisico == null)
@@ -2077,13 +2380,29 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
     }
 
     /// <summary>
-    /// Configura iluminação cibernética noturna otimizada para Meta Quest 3 (URP):
-    /// Remove Point Lights extras com sombras em tempo real (que causavam o erro "Reduced additional punctual light shadows resolution")
-    /// e utiliza apenas 1 Directional Light noturna com Soft Shadows + materiais HDR emissivos com Bloom.
+    /// Configura a iluminação do ambiente conforme o tema ativo (Dark Grid Neon, Clássico Verde/Cinza ou Especial de Natal).
     /// </summary>
     public void ConfigurarIluminacaoSciFi()
     {
-        // Remove qualquer container legado de Point Lights que estourava o Shadow Atlas no Quest 3
+        switch (temaAtual)
+        {
+            case TipoTemaLabirinto.DarkGridNeon:
+                ConfigurarIluminacaoDarkGrid();
+                break;
+            case TipoTemaLabirinto.ClassicoVerdeCinza:
+                ConfigurarIluminacaoTardeClassica();
+                break;
+            case TipoTemaLabirinto.EspecialNatal:
+                ConfigurarIluminacaoNatalInverno();
+                break;
+            default:
+                ConfigurarIluminacaoDarkGrid();
+                break;
+        }
+    }
+
+    private Light ObterOuCriarLuzDirecional()
+    {
         GameObject containerLuzesLegado = GameObject.Find("Iluminacao_Corredores_SciFi");
         if (containerLuzesLegado != null)
         {
@@ -2092,7 +2411,7 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
         }
 
         Light dirLight = null;
-        Light[] allLights = FindObjectsByType<Light>(FindObjectsSortMode.None);
+        Light[] allLights = FindObjectsByType<Light>();
         foreach (var l in allLights)
         {
             if (l == null) continue;
@@ -2102,38 +2421,979 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
             }
             else if (l.type != LightType.Directional)
             {
-                // Desativa sombras de luzes pontuais avulsas para eliminar "Reduced additional punctual light shadows resolution"
                 l.shadows = LightShadows.None;
             }
         }
 
+        if (dirLight == null)
+        {
+            GameObject dlObj = new GameObject("Directional Light");
+            dirLight = dlObj.AddComponent<Light>();
+            dirLight.type = LightType.Directional;
+        }
+        return dirLight;
+    }
+
+    public void ConfigurarIluminacaoDarkGrid()
+    {
+        Light dirLight = ObterOuCriarLuzDirecional();
         if (dirLight != null)
         {
-            dirLight.intensity = 0.22f;
-            dirLight.color = new Color(0.45f, 0.58f, 0.90f, 1f);
+            dirLight.intensity = 0.90f;
+            dirLight.color = new Color(0.80f, 0.92f, 1.0f, 1f);
             dirLight.shadows = LightShadows.Soft;
-            dirLight.shadowStrength = 0.70f;
-            dirLight.transform.rotation = Quaternion.Euler(52f, -35f, 0f);
+            dirLight.shadowStrength = 0.40f;
+            dirLight.transform.rotation = Quaternion.Euler(45f, 40f, 0f);
         }
 
-        // Desliga completamente o Skybox e força fundo sólido Preto em todas as Câmeras da cena
         RenderSettings.skybox = null;
-        RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
-        RenderSettings.ambientSkyColor = Color.black;
-        RenderSettings.ambientEquatorColor = Color.black;
-        RenderSettings.ambientGroundColor = Color.black;
-        RenderSettings.subtractiveShadowColor = Color.black;
+        RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Trilight;
+        RenderSettings.ambientSkyColor = new Color(0.12f, 0.16f, 0.28f, 1f);
+        RenderSettings.ambientEquatorColor = new Color(0.06f, 0.08f, 0.18f, 1f);
+        RenderSettings.ambientGroundColor = new Color(0.01f, 0.02f, 0.06f, 1f);
+        RenderSettings.ambientIntensity = 0.95f;
 
-        Camera[] todasCameras = FindObjectsByType<Camera>(FindObjectsSortMode.None);
+        Color corCeuDark = new Color(0.02f, 0.03f, 0.07f, 1f);
+        Camera[] todasCameras = FindObjectsByType<Camera>();
         foreach (Camera cam in todasCameras)
         {
             if (cam == null) continue;
             cam.clearFlags = CameraClearFlags.SolidColor;
-            cam.backgroundColor = Color.black;
+            cam.backgroundColor = corCeuDark;
         }
 
-        // Garante o otimizador gráfico Quest 3 (MSAA 4x, Render Scale 1.25, Anisotropic Forced On, HDR Bloom baixo)
         OtimizadorGraficoQuest3URP.AplicarOtimizacaoAutomaticaNoBoot();
+    }
+
+    public void ConfigurarIluminacaoTardeClassica()
+    {
+        Light dirLight = ObterOuCriarLuzDirecional();
+        if (dirLight != null)
+        {
+            dirLight.intensity = 1.65f;
+            dirLight.color = new Color(1.0f, 0.93f, 0.84f, 1f);
+            dirLight.shadows = LightShadows.Soft;
+            dirLight.shadowStrength = 0.32f;
+            dirLight.transform.rotation = Quaternion.Euler(34f, 48f, 0f);
+        }
+
+        RenderSettings.skybox = null;
+        RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Trilight;
+        RenderSettings.ambientSkyColor = new Color(0.72f, 0.83f, 0.95f, 1f);
+        RenderSettings.ambientEquatorColor = new Color(0.95f, 0.86f, 0.74f, 1f);
+        RenderSettings.ambientGroundColor = new Color(0.30f, 0.58f, 0.32f, 1f);
+        RenderSettings.ambientIntensity = 1.35f;
+
+        Color corCeuTarde = new Color(0.65f, 0.78f, 0.92f, 1f);
+        Camera[] todasCameras = FindObjectsByType<Camera>();
+        foreach (Camera cam in todasCameras)
+        {
+            if (cam == null) continue;
+            cam.clearFlags = CameraClearFlags.SolidColor;
+            cam.backgroundColor = corCeuTarde;
+        }
+
+        OtimizadorGraficoQuest3URP.AplicarOtimizacaoAutomaticaNoBoot();
+    }
+
+    public void ConfigurarIluminacaoNatalInverno()
+    {
+        Light dirLight = ObterOuCriarLuzDirecional();
+        if (dirLight != null)
+        {
+            dirLight.intensity = 1.45f;
+            dirLight.color = new Color(0.96f, 0.98f, 1.0f, 1f);
+            dirLight.shadows = LightShadows.Soft;
+            dirLight.shadowStrength = 0.28f;
+            dirLight.transform.rotation = Quaternion.Euler(42f, 35f, 0f);
+        }
+
+        RenderSettings.skybox = null;
+        RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Trilight;
+        RenderSettings.ambientSkyColor = new Color(0.85f, 0.90f, 1.0f, 1f);
+        RenderSettings.ambientEquatorColor = new Color(0.92f, 0.94f, 0.98f, 1f);
+        RenderSettings.ambientGroundColor = new Color(0.88f, 0.90f, 0.95f, 1f);
+        RenderSettings.ambientIntensity = 1.25f;
+
+        Color corCeuInverno = new Color(0.80f, 0.87f, 0.96f, 1f);
+        Camera[] todasCameras = FindObjectsByType<Camera>();
+        foreach (Camera cam in todasCameras)
+        {
+            if (cam == null) continue;
+            cam.clearFlags = CameraClearFlags.SolidColor;
+            cam.backgroundColor = corCeuInverno;
+        }
+
+        OtimizadorGraficoQuest3URP.AplicarOtimizacaoAutomaticaNoBoot();
+    }
+
+    /// <summary>
+    /// Altera o tema visual do labirinto em tempo real e atualiza chão, paredes, iluminação e acessórios.
+    /// </summary>
+    public void AplicarTemaLabirinto(TipoTemaLabirinto novoTema)
+    {
+        temaAtual = novoTema;
+        LocalizarPlanoChao();
+
+        Material matChao = null;
+        Material matParede = null;
+
+        switch (novoTema)
+        {
+            case TipoTemaLabirinto.DarkGridNeon:
+                usarEsteticaDarkGrid = true;
+                matChao = CriarMaterialChaoLaboratorio();
+                matParede = CriarMaterialParedePorSuperclasse("Parasitas");
+                ConfigurarIluminacaoDarkGrid();
+                ConfigurarDecoracoesGrid(true);
+                ConfigurarDecoracoesClassico(false);
+                ConfigurarDecoracoesNatal(false);
+                ConfigurarModelosTemaClassicoCIn(false);
+                ConfigurarTotemPortaoGrid(true);
+                ConfigurarChapeusNatalFantasmas(false);
+                ConfigurarTrenoPacMan(false);
+                break;
+
+            case TipoTemaLabirinto.ClassicoVerdeCinza:
+                usarEsteticaDarkGrid = false;
+                matChao = CriarMaterialChaoLaboratorio(); // Retorna Mat_Chao_Grama_Futebol
+                matParede = CriarMaterialParedePorSuperclasse("Parasitas"); // Retorna Mat_Parede_Metalica_Parasitas
+                ConfigurarIluminacaoTardeClassica();
+                ConfigurarDecoracoesGrid(false);
+                ConfigurarDecoracoesClassico(true);
+                ConfigurarDecoracoesNatal(false);
+                ConfigurarModelosTemaClassicoCIn(true);
+                ConfigurarTotemPortaoGrid(false);
+                ConfigurarChapeusNatalFantasmas(false);
+                ConfigurarTrenoPacMan(false);
+                break;
+
+            case TipoTemaLabirinto.EspecialNatal:
+                usarEsteticaDarkGrid = false;
+                matChao = CriarMaterialChaoNatal();
+                matParede = CriarMaterialParedeNatal();
+                ConfigurarIluminacaoNatalInverno();
+                ConfigurarDecoracoesGrid(false);
+                ConfigurarDecoracoesClassico(false);
+                ConfigurarDecoracoesNatal(true);
+                ConfigurarModelosTemaClassicoCIn(false);
+                ConfigurarTotemPortaoGrid(false);
+                ConfigurarChapeusNatalFantasmas(true);
+                ConfigurarTrenoPacMan(true);
+                break;
+        }
+
+        // Aplica material ao chão
+        if (planoChao != null && matChao != null)
+        {
+            Renderer rendChao = planoChao.GetComponent<Renderer>();
+            if (rendChao != null)
+            {
+                rendChao.material = matChao;
+                rendChao.receiveShadows = true;
+            }
+        }
+
+        // Aplica material a todas as paredes instanciadas
+        if (m_ContainerParedes != null && matParede != null)
+        {
+            Renderer[] rends = m_ContainerParedes.GetComponentsInChildren<Renderer>(true);
+            for (int i = 0; i < rends.Length; i++)
+            {
+                if (rends[i] != null && rends[i].gameObject.name.StartsWith("Parede_"))
+                {
+                    rends[i].material = matParede;
+                }
+            }
+        }
+
+        Debug.Log($"<color=#00FF99><b>[TEMA]</b></color> Tema visual alterado para: <b>{novoTema}</b>");
+    }
+
+    public Material CriarMaterialChaoNatal()
+    {
+        Shader shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard") ?? Shader.Find("Diffuse");
+        Material matNeve = new Material(shader);
+        matNeve.name = "Mat_Chao_NeveNatal";
+        Color corNeve = new Color(0.94f, 0.96f, 1.0f, 1f);
+        if (matNeve.HasProperty("_BaseColor")) matNeve.SetColor("_BaseColor", corNeve);
+        if (matNeve.HasProperty("_Color")) matNeve.SetColor("_Color", corNeve);
+        if (matNeve.HasProperty("_Metallic")) matNeve.SetFloat("_Metallic", 0.05f);
+        if (matNeve.HasProperty("_Smoothness")) matNeve.SetFloat("_Smoothness", 0.40f);
+        matNeve.DisableKeyword("_EMISSION");
+        if (matNeve.HasProperty("_EmissionColor")) matNeve.SetColor("_EmissionColor", Color.black);
+        return matNeve;
+    }
+
+    public Material CriarMaterialParedeNatal()
+    {
+        Shader shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard") ?? Shader.Find("Diffuse");
+        Material matParedeNatal = new Material(shader);
+        matParedeNatal.name = "Mat_Parede_NatalFestivo";
+        Color corVermelhoNatal = new Color(0.80f, 0.10f, 0.16f, 1f);
+        if (matParedeNatal.HasProperty("_BaseColor")) matParedeNatal.SetColor("_BaseColor", corVermelhoNatal);
+        if (matParedeNatal.HasProperty("_Color")) matParedeNatal.SetColor("_Color", corVermelhoNatal);
+        if (matParedeNatal.HasProperty("_Metallic")) matParedeNatal.SetFloat("_Metallic", 0.20f);
+        if (matParedeNatal.HasProperty("_Smoothness")) matParedeNatal.SetFloat("_Smoothness", 0.35f);
+        if (matParedeNatal.HasProperty("_EmissionColor"))
+        {
+            matParedeNatal.EnableKeyword("_EMISSION");
+            matParedeNatal.SetColor("_EmissionColor", corVermelhoNatal * 0.15f);
+        }
+        return matParedeNatal;
+    }
+
+    public void ConfigurarChapeusNatalFantasmas(bool ativo)
+    {
+        var fantasmas = FindObjectsByType<ObstaculoInvalidoSemantico>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        for (int i = 0; i < fantasmas.Length; i++)
+        {
+            if (fantasmas[i] != null)
+            {
+                var todosFilhos = fantasmas[i].GetComponentsInChildren<Transform>(true);
+                for (int c = 0; c < todosFilhos.Length; c++)
+                {
+                    if (todosFilhos[c] != null && todosFilhos[c].name.Contains("Chapeu"))
+                    {
+                        todosFilhos[c].gameObject.SetActive(ativo);
+                    }
+                }
+
+                if (ativo)
+                {
+                    Transform tChapeu = fantasmas[i].transform.Find("Chapeu_Papai_Noel");
+                    if (tChapeu == null)
+                    {
+                        CriarChapeuPapaiNoel(fantasmas[i].transform);
+                    }
+                    else
+                    {
+                        tChapeu.gameObject.SetActive(true);
+                    }
+                }
+            }
+        }
+    }
+
+    public static GameObject CriarChapeuPapaiNoel(Transform parent)
+    {
+        Shader shader = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard") ?? Shader.Find("Diffuse");
+        Material matVermelho = new Material(shader) { name = "Mat_Gorro_Vermelho" };
+        Color corVermelhoNatal = new Color(0.88f, 0.05f, 0.10f);
+        if (matVermelho.HasProperty("_BaseColor")) matVermelho.SetColor("_BaseColor", corVermelhoNatal);
+        if (matVermelho.HasProperty("_Color")) matVermelho.SetColor("_Color", corVermelhoNatal);
+        if (matVermelho.HasProperty("_Smoothness")) matVermelho.SetFloat("_Smoothness", 0.35f);
+
+        Material matBranco = new Material(shader) { name = "Mat_Gorro_Pelucia" };
+        if (matBranco.HasProperty("_BaseColor")) matBranco.SetColor("_BaseColor", new Color(0.98f, 0.98f, 1.0f));
+        if (matBranco.HasProperty("_Color")) matBranco.SetColor("_Color", new Color(0.98f, 0.98f, 1.0f));
+        if (matBranco.HasProperty("_Smoothness")) matBranco.SetFloat("_Smoothness", 0.08f);
+
+        GameObject root = new GameObject("Chapeu_Papai_Noel");
+        root.transform.SetParent(parent, false);
+        root.transform.localPosition = new Vector3(0f, 0.85f, -0.04f);
+        root.transform.localRotation = Quaternion.Euler(-8f, 0f, 0f);
+
+        // 1. Borda branca fofa de pelúcia (anel arredondado na base)
+        GameObject borda = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+        borda.name = "Borda_Pelucia";
+        borda.transform.SetParent(root.transform, false);
+        borda.transform.localPosition = Vector3.zero;
+        borda.transform.localScale = new Vector3(0.52f, 0.10f, 0.52f);
+        RemoverColisorObjeto(borda);
+        borda.GetComponent<Renderer>().material = matBranco;
+
+        // 2. Corpo do gorro em arco suave que cai graciosamente para trás
+        GameObject seg1 = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+        seg1.name = "Cone_Seg1";
+        seg1.transform.SetParent(root.transform, false);
+        seg1.transform.localPosition = new Vector3(0f, 0.11f, -0.02f);
+        seg1.transform.localRotation = Quaternion.Euler(-5f, 0f, 0f);
+        seg1.transform.localScale = new Vector3(0.42f, 0.14f, 0.42f);
+        RemoverColisorObjeto(seg1);
+        seg1.GetComponent<Renderer>().material = matVermelho;
+
+        GameObject seg2 = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+        seg2.name = "Cone_Seg2";
+        seg2.transform.SetParent(root.transform, false);
+        seg2.transform.localPosition = new Vector3(0f, 0.22f, -0.06f);
+        seg2.transform.localRotation = Quaternion.Euler(-14f, 0f, 0f);
+        seg2.transform.localScale = new Vector3(0.32f, 0.13f, 0.32f);
+        RemoverColisorObjeto(seg2);
+        seg2.GetComponent<Renderer>().material = matVermelho;
+
+        GameObject seg3 = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+        seg3.name = "Cone_Seg3";
+        seg3.transform.SetParent(root.transform, false);
+        seg3.transform.localPosition = new Vector3(0f, 0.31f, -0.13f);
+        seg3.transform.localRotation = Quaternion.Euler(-26f, 0f, 0f);
+        seg3.transform.localScale = new Vector3(0.22f, 0.12f, 0.22f);
+        RemoverColisorObjeto(seg3);
+        seg3.GetComponent<Renderer>().material = matVermelho;
+
+        GameObject seg4 = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+        seg4.name = "Cone_Seg4";
+        seg4.transform.SetParent(root.transform, false);
+        seg4.transform.localPosition = new Vector3(0f, 0.38f, -0.21f);
+        seg4.transform.localRotation = Quaternion.Euler(-40f, 0f, 0f);
+        seg4.transform.localScale = new Vector3(0.14f, 0.10f, 0.14f);
+        RemoverColisorObjeto(seg4);
+        seg4.GetComponent<Renderer>().material = matVermelho;
+
+        // 3. Pompom branco de pelúcia na ponta caída
+        GameObject pompom = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        pompom.name = "Pompom";
+        pompom.transform.SetParent(root.transform, false);
+        pompom.transform.localPosition = new Vector3(0f, 0.41f, -0.29f);
+        pompom.transform.localScale = new Vector3(0.17f, 0.17f, 0.17f);
+        RemoverColisorObjeto(pompom);
+        pompom.GetComponent<Renderer>().material = matBranco;
+
+        return root;
+    }
+
+    private static void RemoverColisorObjeto(GameObject go)
+    {
+        if (go == null) return;
+        Collider c = go.GetComponent<Collider>();
+        if (c != null)
+        {
+            if (Application.isPlaying) Destroy(c);
+            else DestroyImmediate(c);
+        }
+    }
+
+    public void ConfigurarTrenoPacMan(bool ativo)
+    {
+        var treno = FindFirstObjectByType<TrenoNatalinoPacMan>();
+        if (treno == null)
+        {
+            GameObject player = GameObject.FindWithTag("Player") ?? GameObject.Find("Visual_PacMan");
+            if (player != null)
+            {
+                treno = player.AddComponent<TrenoNatalinoPacMan>();
+            }
+        }
+        if (treno != null)
+        {
+            treno.DefinirAtivo(ativo);
+        }
+    }
+
+    // =========================================================================
+    // DECORAÇÕES TEMÁTICAS PROCEDURAIS (CLÁSSICO E NATAL)
+    // =========================================================================
+
+    public void ConfigurarDecoracoesClassico(bool ativo)
+    {
+        if (m_ContainerDecoracoesClassico == null)
+        {
+            Transform tExistente = transform.Find("Decoracoes_Classico_3D");
+            if (tExistente != null)
+            {
+                m_ContainerDecoracoesClassico = tExistente.gameObject;
+            }
+            else if (ativo)
+            {
+                m_ContainerDecoracoesClassico = ConstruirDecoracoesClassico();
+            }
+        }
+
+        if (m_ContainerDecoracoesClassico != null)
+        {
+            m_ContainerDecoracoesClassico.SetActive(ativo);
+        }
+    }
+
+    private GameObject ConstruirDecoracoesClassico()
+    {
+        GameObject root = new GameObject("Decoracoes_Classico_3D");
+        root.transform.SetParent(transform, false);
+        root.transform.localPosition = Vector3.zero;
+
+        Shader shaderLit = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard") ?? Shader.Find("Diffuse");
+
+        // Materiais para árvores
+        Material matTronco = new Material(shaderLit) { name = "Mat_Tronco_Madeira" };
+        Color corTronco = new Color(0.32f, 0.18f, 0.08f);
+        if (matTronco.HasProperty("_BaseColor")) matTronco.SetColor("_BaseColor", corTronco);
+        if (matTronco.HasProperty("_Color")) matTronco.SetColor("_Color", corTronco);
+        if (matTronco.HasProperty("_Smoothness")) matTronco.SetFloat("_Smoothness", 0.15f);
+
+        Material matCopa1 = new Material(shaderLit) { name = "Mat_Copa_Verde1" };
+        Color corVerde1 = new Color(0.12f, 0.46f, 0.15f);
+        if (matCopa1.HasProperty("_BaseColor")) matCopa1.SetColor("_BaseColor", corVerde1);
+        if (matCopa1.HasProperty("_Color")) matCopa1.SetColor("_Color", corVerde1);
+        if (matCopa1.HasProperty("_Smoothness")) matCopa1.SetFloat("_Smoothness", 0.25f);
+
+        Material matCopa2 = new Material(shaderLit) { name = "Mat_Copa_Verde2" };
+        Color corVerde2 = new Color(0.18f, 0.54f, 0.22f);
+        if (matCopa2.HasProperty("_BaseColor")) matCopa2.SetColor("_BaseColor", corVerde2);
+        if (matCopa2.HasProperty("_Color")) matCopa2.SetColor("_Color", corVerde2);
+        if (matCopa2.HasProperty("_Smoothness")) matCopa2.SetFloat("_Smoothness", 0.25f);
+
+        // 1. FLORESTA INFINITA AO REDOR DO LABIRINTO (360° sem corte de cenário)
+        GameObject grupoArvores = new GameObject("Grupo_Floresta_Infinita_Perimetro");
+        grupoArvores.transform.SetParent(root.transform, false);
+
+        // Terreno estendido (180m x 180m) eliminando corte abrupto do quadrado
+        GameObject pisoExt = GameObject.CreatePrimitive(PrimitiveType.Plane);
+        pisoExt.name = "Piso_Terreno_Exterior";
+        pisoExt.transform.SetParent(grupoArvores.transform, false);
+        pisoExt.transform.localPosition = new Vector3(0f, -0.04f, 0f);
+        pisoExt.transform.localScale = new Vector3(18f, 1f, 18f);
+        RemoverColisorObjeto(pisoExt);
+        Material matChaoExt = new Material(shaderLit) { name = "Mat_Chao_Floresta_Ext" };
+        Color corGramaExt = new Color(0.09f, 0.28f, 0.12f);
+        if (matChaoExt.HasProperty("_BaseColor")) matChaoExt.SetColor("_BaseColor", corGramaExt);
+        if (matChaoExt.HasProperty("_Color")) matChaoExt.SetColor("_Color", corGramaExt);
+        if (matChaoExt.HasProperty("_Smoothness")) matChaoExt.SetFloat("_Smoothness", 0.10f);
+        pisoExt.GetComponent<Renderer>().material = matChaoExt;
+
+        // Materiais adicionais para pinheiros alpinos escuros
+        Material matPinheiro = new Material(shaderLit) { name = "Mat_Pinheiro_VerdeEscuro" };
+        Color corPinheiro = new Color(0.06f, 0.22f, 0.10f);
+        if (matPinheiro.HasProperty("_BaseColor")) matPinheiro.SetColor("_BaseColor", corPinheiro);
+        if (matPinheiro.HasProperty("_Color")) matPinheiro.SetColor("_Color", corPinheiro);
+        if (matPinheiro.HasProperty("_Smoothness")) matPinheiro.SetFloat("_Smoothness", 0.18f);
+
+        // Gera 128 árvores distribuídas em 4 camadas perimétricas profundas (18m, 30m, 48m, 72m)
+        int[] arvoresPorCamada = new int[] { 28, 32, 34, 34 };
+        float[] raiosCamada = new float[] { 19.5f, 32.0f, 48.0f, 72.0f };
+
+        int idArvore = 0;
+        for (int c = 0; c < raiosCamada.Length; c++)
+        {
+            int qtd = arvoresPorCamada[c];
+            float raioBase = raiosCamada[c];
+
+            for (int i = 0; i < qtd; i++)
+            {
+                float angulo = (i + (c * 0.35f)) * (Mathf.PI * 2f / qtd);
+                float raio = raioBase + 3.8f * Mathf.Sin(i * 1.9f + c);
+                float x = Mathf.Cos(angulo) * raio;
+                float z = Mathf.Sin(angulo) * raio;
+
+                GameObject arvore = new GameObject($"Arvore_{idArvore++}");
+                arvore.transform.SetParent(grupoArvores.transform, false);
+                arvore.transform.position = new Vector3(x, 0f, z);
+
+                float escala = 0.85f + 0.40f * Mathf.Abs(Mathf.Sin(idArvore * 2.1f));
+                if (c >= 2) escala *= 1.35f; // Árvores mais distantes são mais altas para cobrir o horizonte
+
+                // Alterna entre Pinheiro Cônico e Árvore Frondosa de Carvalho
+                bool ehPinheiro = (idArvore % 2 == 0);
+
+                // Tronco
+                GameObject tronco = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                tronco.name = "Tronco";
+                tronco.transform.SetParent(arvore.transform, false);
+                float altTronco = (ehPinheiro ? 1.8f : 1.4f) * escala;
+                tronco.transform.localPosition = new Vector3(0f, altTronco, 0f);
+                tronco.transform.localScale = new Vector3(0.50f * escala, altTronco, 0.50f * escala);
+                RemoverColisorObjeto(tronco);
+                tronco.GetComponent<Renderer>().material = matTronco;
+
+                if (ehPinheiro)
+                {
+                    // Pinheiro em 3 camadas cônicas
+                    for (int k = 0; k < 3; k++)
+                    {
+                        GameObject camadaPinheiro = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                        camadaPinheiro.name = $"Pinheiro_Tier_{k}";
+                        camadaPinheiro.transform.SetParent(arvore.transform, false);
+                        float yOffset = (2.2f + k * 1.35f) * escala;
+                        float raioCamada = (2.6f - k * 0.70f) * escala;
+                        camadaPinheiro.transform.localPosition = new Vector3(0f, yOffset, 0f);
+                        camadaPinheiro.transform.localScale = new Vector3(raioCamada, 0.90f * escala, raioCamada);
+                        RemoverColisorObjeto(camadaPinheiro);
+                        camadaPinheiro.GetComponent<Renderer>().material = matPinheiro;
+                    }
+                }
+                else
+                {
+                    // Copa Frondosa Dupla
+                    GameObject copa1 = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                    copa1.name = "Copa_Tier1";
+                    copa1.transform.SetParent(arvore.transform, false);
+                    copa1.transform.localPosition = new Vector3(0f, 3.2f * escala, 0f);
+                    copa1.transform.localScale = new Vector3(2.8f * escala, 1.8f * escala, 2.8f * escala);
+                    RemoverColisorObjeto(copa1);
+                    copa1.GetComponent<Renderer>().material = (i % 2 == 0) ? matCopa1 : matCopa2;
+
+                    GameObject copa2 = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                    copa2.name = "Copa_Tier2";
+                    copa2.transform.SetParent(arvore.transform, false);
+                    copa2.transform.localPosition = new Vector3(0f, 4.4f * escala, 0f);
+                    copa2.transform.localScale = new Vector3(2.0f * escala, 1.6f * escala, 2.0f * escala);
+                    RemoverColisorObjeto(copa2);
+                    copa2.GetComponent<Renderer>().material = (i % 2 == 0) ? matCopa2 : matCopa1;
+                }
+            }
+        }
+
+        // 2. QUADROS DECORATIVOS NAS PAREDES CINZAS INTERNAS (Estilo Casa / Galeria de Arte)
+        GameObject grupoQuadros = new GameObject("Grupo_Quadros_Paredes");
+        grupoQuadros.transform.SetParent(root.transform, false);
+
+        Material matMolduraQuadro = new Material(shaderLit) { name = "Mat_Moldura_MadeiraEscura" };
+        Color corMoldura = new Color(0.20f, 0.10f, 0.05f);
+        if (matMolduraQuadro.HasProperty("_BaseColor")) matMolduraQuadro.SetColor("_BaseColor", corMoldura);
+        if (matMolduraQuadro.HasProperty("_Color")) matMolduraQuadro.SetColor("_Color", corMoldura);
+        if (matMolduraQuadro.HasProperty("_Smoothness")) matMolduraQuadro.SetFloat("_Smoothness", 0.40f);
+
+        Color[] coresTelas = new Color[]
+        {
+            new Color(0.15f, 0.40f, 0.55f), // Paisagem Marinha / Céu
+            new Color(0.55f, 0.20f, 0.15f), // Retrato Clássico Vinho
+            new Color(0.20f, 0.48f, 0.25f), // Botânica / Floresta
+            new Color(0.50f, 0.42f, 0.18f), // Pergaminho / Parasitologia
+            new Color(0.35f, 0.18f, 0.50f), // Arte Abstrata Roxa
+            new Color(0.22f, 0.35f, 0.42f), // Ilustração Científica
+            new Color(0.55f, 0.35f, 0.10f), // Pôr do Sol Dourado
+            new Color(0.18f, 0.45f, 0.38f)  // Esmeralda Clássico
+        };
+
+        // Posições estratégicas nas paredes interiores a 1.55m de altura (nível dos olhos)
+        (Vector3 pos, Quaternion rot)[] spotsQuadros = new (Vector3, Quaternion)[]
+        {
+            (new Vector3(-7f, 1.55f, 5.26f), Quaternion.Euler(0f, 180f, 0f)),
+            (new Vector3(7f, 1.55f, 5.26f), Quaternion.Euler(0f, 180f, 0f)),
+            (new Vector3(-7f, 1.55f, -5.26f), Quaternion.Euler(0f, 0f, 0f)),
+            (new Vector3(7f, 1.55f, -5.26f), Quaternion.Euler(0f, 0f, 0f)),
+            (new Vector3(0f, 1.55f, 7.76f), Quaternion.Euler(0f, 180f, 0f)),
+            (new Vector3(0f, 1.55f, -7.76f), Quaternion.Euler(0f, 0f, 0f)),
+            (new Vector3(-9.76f, 1.55f, 0f), Quaternion.Euler(0f, 90f, 0f)),
+            (new Vector3(9.76f, 1.55f, 0f), Quaternion.Euler(0f, -90f, 0f))
+        };
+
+        for (int i = 0; i < spotsQuadros.Length; i++)
+        {
+            var spot = spotsQuadros[i];
+            GameObject quadro = new GameObject($"Quadro_Parede_{i}");
+            quadro.transform.SetParent(grupoQuadros.transform, false);
+            quadro.transform.position = spot.pos;
+            quadro.transform.rotation = spot.rot;
+
+            // Moldura externa
+            GameObject moldura = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            moldura.name = "Moldura";
+            moldura.transform.SetParent(quadro.transform, false);
+            moldura.transform.localPosition = Vector3.zero;
+            moldura.transform.localScale = new Vector3(1.30f, 0.95f, 0.08f);
+            RemoverColisorObjeto(moldura);
+            moldura.GetComponent<Renderer>().material = matMolduraQuadro;
+
+            // Tela de pintura interna
+            Material matTela = new Material(shaderLit) { name = $"Mat_Tela_{i}" };
+            Color corTela = coresTelas[i % coresTelas.Length];
+            if (matTela.HasProperty("_BaseColor")) matTela.SetColor("_BaseColor", corTela);
+            if (matTela.HasProperty("_Color")) matTela.SetColor("_Color", corTela);
+            if (matTela.HasProperty("_Smoothness")) matTela.SetFloat("_Smoothness", 0.60f);
+
+            GameObject tela = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            tela.name = "Pintura";
+            tela.transform.SetParent(quadro.transform, false);
+            tela.transform.localPosition = new Vector3(0f, 0f, 0.035f);
+            tela.transform.localScale = new Vector3(1.12f, 0.78f, 0.04f);
+            RemoverColisorObjeto(tela);
+            tela.GetComponent<Renderer>().material = matTela;
+        }
+
+        // 3. JANELAS DE CASA NAS PAREDES PERIMETRAIS (Estilo Interior de Residência)
+        GameObject grupoJanelas = new GameObject("Grupo_Janelas_Paredes");
+        grupoJanelas.transform.SetParent(root.transform, false);
+
+        Material matMolduraJanela = new Material(shaderLit) { name = "Mat_Moldura_Janela_Branca" };
+        Color corBranca = new Color(0.92f, 0.93f, 0.96f);
+        if (matMolduraJanela.HasProperty("_BaseColor")) matMolduraJanela.SetColor("_BaseColor", corBranca);
+        if (matMolduraJanela.HasProperty("_Color")) matMolduraJanela.SetColor("_Color", corBranca);
+        if (matMolduraJanela.HasProperty("_Smoothness")) matMolduraJanela.SetFloat("_Smoothness", 0.30f);
+
+        Material matVidroJanela = new Material(shaderLit) { name = "Mat_Vidro_Janela_Dia" };
+        Color corVidro = new Color(0.68f, 0.88f, 1.0f);
+        if (matVidroJanela.HasProperty("_BaseColor")) matVidroJanela.SetColor("_BaseColor", corVidro);
+        if (matVidroJanela.HasProperty("_Color")) matVidroJanela.SetColor("_Color", corVidro);
+        if (matVidroJanela.HasProperty("_Smoothness")) matVidroJanela.SetFloat("_Smoothness", 0.85f);
+        if (matVidroJanela.HasProperty("_EmissionColor"))
+        {
+            matVidroJanela.EnableKeyword("_EMISSION");
+            matVidroJanela.SetColor("_EmissionColor", corVidro * 0.40f);
+        }
+
+        (Vector3 pos, Quaternion rot)[] spotsJanelas = new (Vector3, Quaternion)[]
+        {
+            (new Vector3(-6.5f, 1.60f, 12.76f), Quaternion.Euler(0f, 180f, 0f)),
+            (new Vector3(6.5f, 1.60f, 12.76f), Quaternion.Euler(0f, 180f, 0f)),
+            (new Vector3(-6.5f, 1.60f, -12.76f), Quaternion.Euler(0f, 0f, 0f)),
+            (new Vector3(6.5f, 1.60f, -12.76f), Quaternion.Euler(0f, 0f, 0f)),
+            (new Vector3(12.76f, 1.60f, 5.0f), Quaternion.Euler(0f, -90f, 0f)),
+            (new Vector3(12.76f, 1.60f, -5.0f), Quaternion.Euler(0f, -90f, 0f)),
+            (new Vector3(-12.76f, 1.60f, 5.0f), Quaternion.Euler(0f, 90f, 0f)),
+            (new Vector3(-12.76f, 1.60f, -5.0f), Quaternion.Euler(0f, 90f, 0f))
+        };
+
+        for (int i = 0; i < spotsJanelas.Length; i++)
+        {
+            var spot = spotsJanelas[i];
+            GameObject janela = new GameObject($"Janela_Casa_{i}");
+            janela.transform.SetParent(grupoJanelas.transform, false);
+            janela.transform.position = spot.pos;
+            janela.transform.rotation = spot.rot;
+
+            // Vidro luminoso de dia
+            GameObject vidro = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            vidro.name = "Vidro_Dia";
+            vidro.transform.SetParent(janela.transform, false);
+            vidro.transform.localPosition = new Vector3(0f, 0f, 0.02f);
+            vidro.transform.localScale = new Vector3(1.40f, 1.25f, 0.04f);
+            RemoverColisorObjeto(vidro);
+            vidro.GetComponent<Renderer>().material = matVidroJanela;
+
+            // Moldura externa branca
+            GameObject moldura = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            moldura.name = "Moldura_Externa";
+            moldura.transform.SetParent(janela.transform, false);
+            moldura.transform.localPosition = Vector3.zero;
+            moldura.transform.localScale = new Vector3(1.52f, 1.38f, 0.06f);
+            RemoverColisorObjeto(moldura);
+            moldura.GetComponent<Renderer>().material = matMolduraJanela;
+
+            // Divisórias de 4 vidros (Cruzeta / Mullions)
+            GameObject barraVert = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            barraVert.name = "Divisoria_Vertical";
+            barraVert.transform.SetParent(janela.transform, false);
+            barraVert.transform.localPosition = new Vector3(0f, 0f, 0.045f);
+            barraVert.transform.localScale = new Vector3(0.08f, 1.25f, 0.04f);
+            RemoverColisorObjeto(barraVert);
+            barraVert.GetComponent<Renderer>().material = matMolduraJanela;
+
+            GameObject barraHoriz = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            barraHoriz.name = "Divisoria_Horizontal";
+            barraHoriz.transform.SetParent(janela.transform, false);
+            barraHoriz.transform.localPosition = new Vector3(0f, 0f, 0.045f);
+            barraHoriz.transform.localScale = new Vector3(1.40f, 0.08f, 0.04f);
+            RemoverColisorObjeto(barraHoriz);
+            barraHoriz.GetComponent<Renderer>().material = matMolduraJanela;
+        }
+
+        return root;
+    }
+
+    public void ConfigurarDecoracoesNatal(bool ativo)
+    {
+        if (m_ContainerDecoracoesNatal == null)
+        {
+            Transform tExistente = transform.Find("Decoracoes_Natal_3D");
+            if (tExistente != null)
+            {
+                m_ContainerDecoracoesNatal = tExistente.gameObject;
+            }
+            else if (ativo)
+            {
+                m_ContainerDecoracoesNatal = ConstruirDecoracoesNatal();
+            }
+        }
+
+        if (m_ContainerDecoracoesNatal != null)
+        {
+            m_ContainerDecoracoesNatal.SetActive(ativo);
+        }
+    }
+
+    private GameObject ConstruirDecoracoesNatal()
+    {
+        GameObject root = new GameObject("Decoracoes_Natal_3D");
+        root.transform.SetParent(transform, false);
+        root.transform.localPosition = Vector3.zero;
+
+        Shader shaderLit = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard") ?? Shader.Find("Diffuse");
+
+        // Materiais festivos
+        Material matPinheiro = new Material(shaderLit) { name = "Mat_Pinheiro_Natal" };
+        Color corVerdePinheiro = new Color(0.06f, 0.38f, 0.14f);
+        if (matPinheiro.HasProperty("_BaseColor")) matPinheiro.SetColor("_BaseColor", corVerdePinheiro);
+        if (matPinheiro.HasProperty("_Color")) matPinheiro.SetColor("_Color", corVerdePinheiro);
+        if (matPinheiro.HasProperty("_Smoothness")) matPinheiro.SetFloat("_Smoothness", 0.30f);
+
+        Material matEstrelaOuro = new Material(shaderLit) { name = "Mat_Estrela_Ouro" };
+        Color corOuro = new Color(1.0f, 0.85f, 0.15f);
+        if (matEstrelaOuro.HasProperty("_BaseColor")) matEstrelaOuro.SetColor("_BaseColor", corOuro);
+        if (matEstrelaOuro.HasProperty("_Color")) matEstrelaOuro.SetColor("_Color", corOuro);
+        if (matEstrelaOuro.HasProperty("_Smoothness")) matEstrelaOuro.SetFloat("_Smoothness", 0.85f);
+        if (matEstrelaOuro.HasProperty("_EmissionColor"))
+        {
+            matEstrelaOuro.EnableKeyword("_EMISSION");
+            matEstrelaOuro.SetColor("_EmissionColor", corOuro * 0.90f);
+        }
+
+        Material matVermelhoNatal = new Material(shaderLit) { name = "Mat_Bolinhas_Vermelha" };
+        Color corVermelha = new Color(0.85f, 0.08f, 0.12f);
+        if (matVermelhoNatal.HasProperty("_BaseColor")) matVermelhoNatal.SetColor("_BaseColor", corVermelha);
+        if (matVermelhoNatal.HasProperty("_Color")) matVermelhoNatal.SetColor("_Color", corVermelha);
+        if (matVermelhoNatal.HasProperty("_Smoothness")) matVermelhoNatal.SetFloat("_Smoothness", 0.85f);
+
+        Material matOuroPolido = new Material(shaderLit) { name = "Mat_Bolinhas_Ouro" };
+        if (matOuroPolido.HasProperty("_BaseColor")) matOuroPolido.SetColor("_BaseColor", new Color(0.95f, 0.75f, 0.10f));
+        if (matOuroPolido.HasProperty("_Smoothness")) matOuroPolido.SetFloat("_Smoothness", 0.90f);
+
+        Material matCianoGelo = new Material(shaderLit) { name = "Mat_Bolinhas_Ciano" };
+        if (matCianoGelo.HasProperty("_BaseColor")) matCianoGelo.SetColor("_BaseColor", new Color(0.10f, 0.85f, 1.0f));
+        if (matCianoGelo.HasProperty("_Smoothness")) matCianoGelo.SetFloat("_Smoothness", 0.85f);
+
+        Material matFitaPresente = new Material(shaderLit) { name = "Mat_Fita_Dourada" };
+        if (matFitaPresente.HasProperty("_BaseColor")) matFitaPresente.SetColor("_BaseColor", new Color(1.0f, 0.90f, 0.20f));
+        if (matFitaPresente.HasProperty("_Smoothness")) matFitaPresente.SetFloat("_Smoothness", 0.80f);
+
+        Material matFitaVermelha = new Material(shaderLit) { name = "Mat_Fita_Vermelha" };
+        if (matFitaVermelha.HasProperty("_BaseColor")) matFitaVermelha.SetColor("_BaseColor", new Color(0.85f, 0.10f, 0.15f));
+        if (matFitaVermelha.HasProperty("_Smoothness")) matFitaVermelha.SetFloat("_Smoothness", 0.80f);
+
+        Material[] matsBolinhas = new Material[] { matVermelhoNatal, matOuroPolido, matCianoGelo };
+
+        // 1. ÁRVORES DE NATAL DECORADAS (4 nos cantos do labirinto + 2 na saída da gaiola)
+        Vector3[] posicoesArvoresNatal = new Vector3[]
+        {
+            new Vector3(-11.5f, 0f, 11.5f),
+            new Vector3(11.5f, 0f, 11.5f),
+            new Vector3(-11.5f, 0f, -11.5f),
+            new Vector3(11.5f, 0f, -11.5f),
+            new Vector3(-4.2f, 0f, 0f),
+            new Vector3(4.2f, 0f, 0f)
+        };
+
+        for (int i = 0; i < posicoesArvoresNatal.Length; i++)
+        {
+            GameObject arvoreNatal = new GameObject($"Arvore_Natal_{i}");
+            arvoreNatal.transform.SetParent(root.transform, false);
+            arvoreNatal.transform.position = posicoesArvoresNatal[i];
+
+            // 3 Tiers cônicos de pinheiro
+            float[] raiosTier = { 1.50f, 1.15f, 0.75f };
+            float[] alturasTier = { 1.20f, 2.20f, 3.10f };
+
+            for (int t = 0; t < 3; t++)
+            {
+                GameObject cone = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                cone.name = $"Pinheiro_Tier_{t}";
+                cone.transform.SetParent(arvoreNatal.transform, false);
+                cone.transform.localPosition = new Vector3(0f, alturasTier[t], 0f);
+                cone.transform.localScale = new Vector3(raiosTier[t], 0.65f, raiosTier[t]);
+                RemoverColisorObjeto(cone);
+                cone.GetComponent<Renderer>().material = matPinheiro;
+
+                // 4 Bolinhas decorativas por tier
+                for (int b = 0; b < 4; b++)
+                {
+                    float ang = b * (Mathf.PI * 0.5f) + (t * 0.4f);
+                    float rb = (raiosTier[t] * 0.48f);
+                    Vector3 posBolinha = new Vector3(Mathf.Cos(ang) * rb, alturasTier[t] - 0.22f, Mathf.Sin(ang) * rb);
+
+                    GameObject bolinha = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                    bolinha.name = $"Bolinha_{t}_{b}";
+                    bolinha.transform.SetParent(arvoreNatal.transform, false);
+                    bolinha.transform.localPosition = posBolinha;
+                    bolinha.transform.localScale = new Vector3(0.22f, 0.22f, 0.22f);
+                    RemoverColisorObjeto(bolinha);
+                    bolinha.GetComponent<Renderer>().material = matsBolinhas[(t + b) % matsBolinhas.Length];
+                }
+            }
+
+            // Estrela dourada no topo
+            GameObject estrela = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            estrela.name = "Estrela_Topo";
+            estrela.transform.SetParent(arvoreNatal.transform, false);
+            estrela.transform.localPosition = new Vector3(0f, 3.85f, 0f);
+            estrela.transform.localScale = new Vector3(0.42f, 0.42f, 0.42f);
+            RemoverColisorObjeto(estrela);
+            estrela.GetComponent<Renderer>().material = matEstrelaOuro;
+
+            // 2. CAIXAS DE PRESENTES EMBRULHADOS AO PÉ DA ÁRVORE
+            Color[] coresPresente = new Color[]
+            {
+                new Color(0.80f, 0.08f, 0.12f), // Vermelho
+                new Color(0.08f, 0.50f, 0.18f), // Verde esmeralda
+                new Color(0.10f, 0.35f, 0.75f), // Azul safira
+                new Color(0.85f, 0.65f, 0.10f)  // Dourado
+            };
+
+            for (int p = 0; p < 2; p++)
+            {
+                float angP = (p == 0) ? 0.8f : -1.2f;
+                Vector3 posP = new Vector3(Mathf.Cos(angP) * 1.1f, 0.22f, Mathf.Sin(angP) * 1.1f);
+
+                GameObject presente = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                presente.name = $"Presente_{p}";
+                presente.transform.SetParent(arvoreNatal.transform, false);
+                presente.transform.localPosition = posP;
+                presente.transform.localRotation = Quaternion.Euler(0f, (p * 35f), 0f);
+                presente.transform.localScale = new Vector3(0.48f, 0.44f, 0.48f);
+                RemoverColisorObjeto(presente);
+
+                Material matCaixa = new Material(shaderLit) { name = $"Mat_Caixa_{i}_{p}" };
+                Color corCx = coresPresente[(i + p) % coresPresente.Length];
+                if (matCaixa.HasProperty("_BaseColor")) matCaixa.SetColor("_BaseColor", corCx);
+                if (matCaixa.HasProperty("_Color")) matCaixa.SetColor("_Color", corCx);
+                if (matCaixa.HasProperty("_Smoothness")) matCaixa.SetFloat("_Smoothness", 0.60f);
+                presente.GetComponent<Renderer>().material = matCaixa;
+
+                // Fita do presente
+                GameObject fita = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                fita.name = "Fita_Presente";
+                fita.transform.SetParent(presente.transform, false);
+                fita.transform.localPosition = new Vector3(0f, 0f, 0f);
+                fita.transform.localScale = new Vector3(1.02f, 1.02f, 0.18f);
+                RemoverColisorObjeto(fita);
+                fita.GetComponent<Renderer>().material = (corCx == corOuro) ? matFitaVermelha : matFitaPresente;
+
+                // Lacinho de fita no topo do presente
+                GameObject laco = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                laco.name = "Laco_Topo";
+                laco.transform.SetParent(presente.transform, false);
+                laco.transform.localPosition = new Vector3(0f, 0.54f, 0f);
+                laco.transform.localScale = new Vector3(0.32f, 0.18f, 0.32f);
+                RemoverColisorObjeto(laco);
+                laco.GetComponent<Renderer>().material = fita.GetComponent<Renderer>().material;
+            }
+        }
+
+        // 3. FLORESTA INFINITA DE PINHEIROS DE NATAL 360° (180m x 180m com 128 pinheiros decorados)
+        GameObject grupoPinheirosPerimetro = new GameObject("Grupo_Pinheiros_Natal_Perimetro");
+        grupoPinheirosPerimetro.transform.SetParent(root.transform, false);
+
+        // Terreno estendido de neve branca (180m x 180m)
+        GameObject pisoNeveExt = GameObject.CreatePrimitive(PrimitiveType.Plane);
+        pisoNeveExt.name = "Piso_Terreno_Exterior_Neve";
+        pisoNeveExt.transform.SetParent(grupoPinheirosPerimetro.transform, false);
+        pisoNeveExt.transform.localPosition = new Vector3(0f, -0.04f, 0f);
+        pisoNeveExt.transform.localScale = new Vector3(18f, 1f, 18f);
+        RemoverColisorObjeto(pisoNeveExt);
+
+        Material matNeveExt = new Material(shaderLit) { name = "Mat_Chao_Neve_Ext" };
+        Color corNeveExt = new Color(0.92f, 0.95f, 1.0f);
+        if (matNeveExt.HasProperty("_BaseColor")) matNeveExt.SetColor("_BaseColor", corNeveExt);
+        if (matNeveExt.HasProperty("_Color")) matNeveExt.SetColor("_Color", corNeveExt);
+        if (matNeveExt.HasProperty("_Smoothness")) matNeveExt.SetFloat("_Smoothness", 0.40f);
+        pisoNeveExt.GetComponent<Renderer>().material = matNeveExt;
+
+        int[] pinheirosPorCamada = new int[] { 28, 32, 34, 34 };
+        float[] raiosCamadaPinheiros = new float[] { 19.5f, 32.0f, 48.0f, 72.0f };
+
+        int idPinheiro = 0;
+        for (int c = 0; c < raiosCamadaPinheiros.Length; c++)
+        {
+            int qtd = pinheirosPorCamada[c];
+            float raioBase = raiosCamadaPinheiros[c];
+
+            for (int k = 0; k < qtd; k++)
+            {
+                float angulo = (k + (c * 0.35f)) * (Mathf.PI * 2f / qtd);
+                float raio = raioBase + 3.5f * Mathf.Sin(k * 1.8f + c);
+                float x = Mathf.Cos(angulo) * raio;
+                float z = Mathf.Sin(angulo) * raio;
+
+                GameObject pinheiro = new GameObject($"Pinheiro_Natal_Perimetro_{idPinheiro++}");
+                pinheiro.transform.SetParent(grupoPinheirosPerimetro.transform, false);
+                pinheiro.transform.position = new Vector3(x, 0f, z);
+
+                float escala = 0.85f + 0.45f * Mathf.Abs(Mathf.Sin(idPinheiro * 2.3f));
+                if (c >= 2) escala *= 1.35f;
+
+                // Tronco
+                GameObject tronco = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                tronco.name = "Tronco";
+                tronco.transform.SetParent(pinheiro.transform, false);
+                float altTr = 1.6f * escala;
+                tronco.transform.localPosition = new Vector3(0f, altTr, 0f);
+                tronco.transform.localScale = new Vector3(0.45f * escala, altTr, 0.45f * escala);
+                RemoverColisorObjeto(tronco);
+                Material matTroncoPinheiro = new Material(shaderLit) { color = new Color(0.28f, 0.16f, 0.08f) };
+                tronco.GetComponent<Renderer>().material = matTroncoPinheiro;
+
+                // 3 Tiers de Pinheiro com Bolinhas
+                for (int t = 0; t < 3; t++)
+                {
+                    GameObject camadaCone = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                    camadaCone.name = $"Cone_Tier_{t}";
+                    camadaCone.transform.SetParent(pinheiro.transform, false);
+                    float yOffset = (2.2f + t * 1.30f) * escala;
+                    float raioCamada = (2.6f - t * 0.70f) * escala;
+                    camadaCone.transform.localPosition = new Vector3(0f, yOffset, 0f);
+                    camadaCone.transform.localScale = new Vector3(raioCamada, 0.65f * escala, raioCamada);
+                    RemoverColisorObjeto(camadaCone);
+                    camadaCone.GetComponent<Renderer>().material = matPinheiro;
+
+                    // Bolinhas
+                    for (int b = 0; b < 4; b++)
+                    {
+                        float angB = b * (Mathf.PI * 0.5f) + (t * 0.45f);
+                        float rb = raioCamada * 0.48f;
+                        Vector3 posB = new Vector3(Mathf.Cos(angB) * rb, yOffset - 0.18f * escala, Mathf.Sin(angB) * rb);
+
+                        GameObject bolinha = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                        bolinha.name = $"Bolinha_{t}_{b}";
+                        bolinha.transform.SetParent(pinheiro.transform, false);
+                        bolinha.transform.localPosition = posB;
+                        bolinha.transform.localScale = Vector3.one * (0.24f * escala);
+                        RemoverColisorObjeto(bolinha);
+                        bolinha.GetComponent<Renderer>().material = matsBolinhas[(t + b + idPinheiro) % matsBolinhas.Length];
+                    }
+                }
+
+                // Estrela dourada no topo
+                GameObject estrela = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                estrela.name = "Estrela_Topo";
+                estrela.transform.SetParent(pinheiro.transform, false);
+                estrela.transform.localPosition = new Vector3(0f, (5.8f) * escala, 0f);
+                estrela.transform.localScale = Vector3.one * (0.45f * escala);
+                RemoverColisorObjeto(estrela);
+                estrela.GetComponent<Renderer>().material = matEstrelaOuro;
+            }
+        }
+
+
+
+                // 3. EFEITO DE NEVE SUAVE CAINDO SOBRE O LABIRINTO (ParticleSystem)
+        GameObject objNeve = new GameObject("Efeito_Nevasca_Natal");
+        objNeve.transform.SetParent(root.transform, false);
+        objNeve.transform.position = new Vector3(0f, 12f, 0f);
+
+        ParticleSystem ps = objNeve.AddComponent<ParticleSystem>();
+        var main = ps.main;
+        main.loop = true;
+        main.startLifetime = 6.0f;
+        main.startSpeed = 2.0f;
+        main.startSize = 0.10f;
+        main.maxParticles = 800;
+        main.simulationSpace = ParticleSystemSimulationSpace.World;
+        main.startColor = new Color(0.95f, 0.97f, 1.0f, 0.85f);
+
+        var emission = ps.emission;
+        emission.rateOverTime = 140f;
+
+        var shape = ps.shape;
+        shape.shapeType = ParticleSystemShapeType.Box;
+        shape.scale = new Vector3(30f, 1f, 30f);
+
+        var velocity = ps.velocityOverLifetime;
+        velocity.enabled = true;
+        velocity.x = new ParticleSystem.MinMaxCurve(-0.35f, 0.35f);
+        velocity.y = new ParticleSystem.MinMaxCurve(0f, 0f);
+        velocity.z = new ParticleSystem.MinMaxCurve(-0.35f, 0.35f);
+
+        ParticleSystemRenderer psr = objNeve.GetComponent<ParticleSystemRenderer>();
+        if (psr != null)
+        {
+            Shader shaderParticula = Shader.Find("Universal Render Pipeline/Particles/Unlit") ??
+                                    Shader.Find("Mobile/Particles/Additive") ??
+                                    Shader.Find("Sprites/Default");
+            Material matFloco = new Material(shaderParticula) { name = "Mat_Flocos_Neve" };
+            if (matFloco.HasProperty("_BaseColor")) matFloco.SetColor("_BaseColor", Color.white);
+            if (matFloco.HasProperty("_Color")) matFloco.SetColor("_Color", Color.white);
+            psr.material = matFloco;
+        }
+
+        return root;
     }
 
     /// <summary>
@@ -2141,11 +3401,14 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
     /// </summary>
     
     /// <summary>
-    /// Instancia Nodos Âncora de Relações (Object Properties) e Indivíduos Nomeados nos 4 cantos.
-    /// (As antigas "Cerejas" foram substituídas pela mecânica espacial de LineRenderer em RelationBuilder.cs).
+    /// Garante o componente RelationBuilder ativo no Player para traçar Object Properties (LineRenderer).
+    /// As antigas Power Pellets estáticas de quina foram migradas para a regra ontológica estrita:
+    /// estritamente 1 a cada 3 orbes sequenciais concede o poder de devorar fantasmas.
     /// </summary>
     public void InstanciarCerejasEPowerPellets()
     {
+        if (!instanciarGemas) return;
+
         // Garante que o Player possua o componente RelationBuilder ativo para traçar Object Properties (LineRenderer)
         GameObject playerObj = GameObject.FindWithTag("Player") ?? GameObject.Find("Visual_PacMan");
         if (playerObj != null && playerObj.GetComponent<RelationBuilder>() == null)
@@ -2153,53 +3416,7 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
             playerObj.AddComponent<RelationBuilder>();
         }
 
-        // 2. POWER PELLETS / NAMED INDIVIDUALS: 4 Nodos prismáticos nos cantos do labirinto
-        Vector3[] cantosPellets = new Vector3[]
-        {
-            new Vector3(-8.5f, 0.35f, 8.5f),
-            new Vector3(8.5f, 0.35f, 8.5f),
-            new Vector3(-8.5f, 0.35f, -8.5f),
-            new Vector3(8.5f, 0.35f, -8.5f)
-        };
-
-        string[] nomesIndividuos = new string[]
-        {
-            "Human_Host_01",
-            "SmallIntestine_Habitat_02",
-            "FecalOral_Transmission_03",
-            "AntiparasiticTreatment_04"
-        };
-
-        for (int i = 0; i < cantosPellets.Length; i++)
-        {
-            GameObject pelletObj = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            pelletObj.name = $"NamedIndividual_Node_{i + 1}";
-            pelletObj.transform.position = new Vector3(cantosPellets[i].x, 0.65f, cantosPellets[i].z);
-            pelletObj.transform.localScale = new Vector3(0.42f, 0.58f, 0.42f);
-            pelletObj.transform.localRotation = Quaternion.Euler(35f, 45f, 0f);
-            pelletObj.transform.SetParent(transform);
-
-            Renderer rendP = pelletObj.GetComponent<Renderer>();
-            if (rendP != null)
-            {
-                rendP.material = CriarMaterialTranslúcidoNodo(new Color(0.65f, 0.35f, 1.0f, 1f), 0.62f);
-            }
-
-            BoxCollider boxCol = pelletObj.GetComponent<BoxCollider>();
-            if (boxCol != null) Destroy(boxCol);
-            SphereCollider colP = pelletObj.AddComponent<SphereCollider>();
-            colP.isTrigger = true;
-            colP.radius = 0.85f;
-
-            var scriptP = pelletObj.AddComponent<PowerPelletIndividualSemantico>();
-            scriptP.nomeIndividuo = nomesIndividuos[i];
-
-            AnexarLuzPontualDestaque(pelletObj, new Color(0.65f, 0.35f, 1.0f, 1f), 2.6f, 1.35f);
-
-            m_ObjetosInstanciados.Add(pelletObj);
-        }
-
-        Debug.Log("<color=#A855F7><b>[Mapeamento Ontológico]</b></color> RelationBuilder (LineRenderer) ativo e 4 Nodos de Indivíduos Nomeados instanciados no espaço.");
+        Debug.Log("<color=#A855F7><b>[Mapeamento Ontológico]</b></color> RelationBuilder (LineRenderer) ativo no Pac-Man.");
     }
 
     public void ConstruirLabirinto3D()
@@ -2226,41 +3443,79 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
         Material matParede = materialParedes;
         if (matParede == null)
         {
-            matParede = Resources.Load<Material>("Mat_Parede_Labirinto_AzulNeon");
-#if UNITY_EDITOR
-            if (matParede == null)
+            if (!usarEsteticaDarkGrid)
             {
-                matParede = UnityEditor.AssetDatabase.LoadAssetAtPath<Material>("Assets/Materials/Mat_Parede_Labirinto_AzulNeon.mat");
+                matParede = CriarMaterialParedePorSuperclasse("Parasitas");
             }
-#endif
-            if (matParede == null)
+            else
             {
-                matParede = CriarMaterialParedeBiomedicaSciFi();
+                matParede = Resources.Load<Material>("Mat_Parede_Labirinto_AzulNeon");
+#if UNITY_EDITOR
+                if (matParede == null)
+                {
+                    matParede = UnityEditor.AssetDatabase.LoadAssetAtPath<Material>("Assets/Materials/Mat_Parede_Labirinto_AzulNeon.mat");
+                }
+#endif
+                if (matParede == null)
+                {
+                    matParede = CriarMaterialParedeBiomedicaSciFi();
+                }
             }
         }
 
         float metade = tamanhoLabirinto / 2f;
         float yCentro = transform.position.y + (alturaParedes / 2f);
+        float yChao = ObterAlturaSuperficieChao(Vector3.zero);
 
-        // 1. Paredes Perimetrais Externas (Fecham o labirinto)
-                // Parede Norte com Abertura para a Saída / Portal de Escape Ontológico
-        float larguraAsa = (tamanhoLabirinto - 4.4f) / 2f;
-        float offsetAsa = (metade + 2.2f) / 2f;
-        CriarBlocoParede(m_ContainerParedes.transform, new Vector3(-offsetAsa, yCentro, metade), new Vector3(larguraAsa + espessuraParedes, alturaParedes, espessuraParedes), matParede, "Parede_Norte_Oeste");
-        CriarBlocoParede(m_ContainerParedes.transform, new Vector3(offsetAsa, yCentro, metade), new Vector3(larguraAsa + espessuraParedes, alturaParedes, espessuraParedes), matParede, "Parede_Norte_Leste");
+        // 1. Paredes Perimetrais Externas com Túneis Warp Leste-Oeste e Portal de Escape Norte
+        float larguraAsaNorte = (tamanhoLabirinto - 4.4f) / 2f;
+        float offsetAsaNorte = (metade + 2.2f) / 2f;
+        CriarBlocoParede(m_ContainerParedes.transform, new Vector3(-offsetAsaNorte, yCentro, metade), new Vector3(larguraAsaNorte + espessuraParedes, alturaParedes, espessuraParedes), matParede, "Parede_Norte_Oeste");
+        CriarBlocoParede(m_ContainerParedes.transform, new Vector3(offsetAsaNorte, yCentro, metade), new Vector3(larguraAsaNorte + espessuraParedes, alturaParedes, espessuraParedes), matParede, "Parede_Norte_Leste");
 
-        // Constrói o Portal de Saída / Câmara de Escape Ontológico
+        // Portal de Saída Norte
         ConstruirPortalSaidaProcedural(m_ContainerParedes.transform, new Vector3(0f, yCentro, metade), matParede);
+
+        // Parede Sul Perimetral
         CriarBlocoParede(m_ContainerParedes.transform, new Vector3(0f, yCentro, -metade), new Vector3(tamanhoLabirinto + espessuraParedes, alturaParedes, espessuraParedes), matParede, "Parede_Sul");
-        CriarBlocoParede(m_ContainerParedes.transform, new Vector3(metade, yCentro, 0f), new Vector3(espessuraParedes, alturaParedes, tamanhoLabirinto), matParede, "Parede_Leste");
-        CriarBlocoParede(m_ContainerParedes.transform, new Vector3(-metade, yCentro, 0f), new Vector3(espessuraParedes, alturaParedes, tamanhoLabirinto), matParede, "Parede_Oeste");
 
-        // 2. Corredores Internos Clássicos do Pac-Man
-        CriarBlocoParede(m_ContainerParedes.transform, new Vector3(-3.5f, yCentro, 0f), new Vector3(espessuraParedes, alturaParedes, 5.5f), matParede, "Parede_Centro_Esq");
-        CriarBlocoParede(m_ContainerParedes.transform, new Vector3(3.5f, yCentro, 0f), new Vector3(espessuraParedes, alturaParedes, 5.5f), matParede, "Parede_Centro_Dir");
-        CriarBlocoParede(m_ContainerParedes.transform, new Vector3(0f, yCentro, -2.75f), new Vector3(7f, alturaParedes, espessuraParedes), matParede, "Parede_Centro_Sul");
+        // Parede Leste dividida em duas asas com abertura para o Túnel Warp (Z entre -1.8 e +1.8)
+        float meiaAberturaTunel = 1.8f;
+        float comprimentoAsaTunel = (tamanhoLabirinto - (meiaAberturaTunel * 2f)) / 2f;
+        float centroZAsaNorte = (metade + meiaAberturaTunel) / 2f;
+        float centroZAsaSul = -(metade + meiaAberturaTunel) / 2f;
 
-        // Blocos em L nos quadrantes
+        CriarBlocoParede(m_ContainerParedes.transform, new Vector3(metade, yCentro, centroZAsaNorte), new Vector3(espessuraParedes, alturaParedes, comprimentoAsaTunel), matParede, "Parede_Leste_Norte");
+        CriarBlocoParede(m_ContainerParedes.transform, new Vector3(metade, yCentro, centroZAsaSul), new Vector3(espessuraParedes, alturaParedes, comprimentoAsaTunel), matParede, "Parede_Leste_Sul");
+
+        // Parede Oeste dividida em duas asas com abertura para o Túnel Warp
+        CriarBlocoParede(m_ContainerParedes.transform, new Vector3(-metade, yCentro, centroZAsaNorte), new Vector3(espessuraParedes, alturaParedes, comprimentoAsaTunel), matParede, "Parede_Oeste_Norte");
+        CriarBlocoParede(m_ContainerParedes.transform, new Vector3(-metade, yCentro, centroZAsaSul), new Vector3(espessuraParedes, alturaParedes, comprimentoAsaTunel), matParede, "Parede_Oeste_Sul");
+
+        // Gatilhos de Teletransporte Warp Leste-Oeste (Clássico Pac-Man)
+        CriarGatilhoWarpTunel(m_ContainerParedes.transform, new Vector3(-metade - 0.4f, yCentro, 0f), new Vector3(1.2f, alturaParedes, 3.2f), new Vector3(metade - 1.4f, yChao, 0f), "Gatilho_Warp_OesteParaLeste");
+        CriarGatilhoWarpTunel(m_ContainerParedes.transform, new Vector3(metade + 0.4f, yCentro, 0f), new Vector3(1.2f, alturaParedes, 3.2f), new Vector3(-metade + 1.4f, yChao, 0f), "Gatilho_Warp_LesteParaOeste");
+
+        // 2. Gaiola Central dos Fantasmas (Ghost House) com Porta Neon Translúcida
+        CriarBlocoParede(m_ContainerParedes.transform, new Vector3(-2.6f, yCentro, 0f), new Vector3(espessuraParedes, alturaParedes, 4.4f), matParede, "Parede_Gaiola_Oeste");
+        CriarBlocoParede(m_ContainerParedes.transform, new Vector3(2.6f, yCentro, 0f), new Vector3(espessuraParedes, alturaParedes, 4.4f), matParede, "Parede_Gaiola_Leste");
+        CriarBlocoParede(m_ContainerParedes.transform, new Vector3(0f, yCentro, -2.2f), new Vector3(5.2f + espessuraParedes, alturaParedes, espessuraParedes), matParede, "Parede_Gaiola_Sul");
+        CriarBlocoParede(m_ContainerParedes.transform, new Vector3(-1.8f, yCentro, 2.2f), new Vector3(1.8f, alturaParedes, espessuraParedes), matParede, "Parede_Gaiola_Norte_Esq");
+        CriarBlocoParede(m_ContainerParedes.transform, new Vector3(1.8f, yCentro, 2.2f), new Vector3(1.8f, alturaParedes, espessuraParedes), matParede, "Parede_Gaiola_Norte_Dir");
+
+        // Barra/Portão Neon da Gaiola Central
+        GameObject portaoBarra = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        portaoBarra.name = "Portao_Barra_Gaiola_Neon";
+        portaoBarra.transform.SetParent(m_ContainerParedes.transform, false);
+        portaoBarra.transform.position = new Vector3(0f, yCentro, 2.2f);
+        portaoBarra.transform.localScale = new Vector3(1.8f, 0.28f, 0.28f);
+        var colPortao = portaoBarra.GetComponent<Collider>();
+        if (colPortao != null) colPortao.isTrigger = true;
+        Material matPortao = CriarMaterialTranslúcidoNodo(new Color(0.0f, 0.95f, 1.0f, 1f), 0.85f);
+        portaoBarra.GetComponent<Renderer>().material = matPortao;
+
+        // 3. Topologia de Corredores e Blocos Internos do Labirinto (Multi-vias e Loops)
+        // Blocos em L nos 4 quadrantes
         CriarBlocoParede(m_ContainerParedes.transform, new Vector3(-7f, yCentro, 6f), new Vector3(6f, alturaParedes, espessuraParedes), matParede, "Parede_NW_H");
         CriarBlocoParede(m_ContainerParedes.transform, new Vector3(-7f, yCentro, 8.5f), new Vector3(espessuraParedes, alturaParedes, 5f), matParede, "Parede_NW_V");
 
@@ -2273,9 +3528,13 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
         CriarBlocoParede(m_ContainerParedes.transform, new Vector3(7f, yCentro, -6f), new Vector3(6f, alturaParedes, espessuraParedes), matParede, "Parede_SE_H");
         CriarBlocoParede(m_ContainerParedes.transform, new Vector3(7f, yCentro, -8.5f), new Vector3(espessuraParedes, alturaParedes, 5f), matParede, "Parede_SE_V");
 
-        // Divisórias dos corredores centrais Norte e Sul
+        // Divisórias centrais Norte e Sul
         CriarBlocoParede(m_ContainerParedes.transform, new Vector3(0f, yCentro, 8.5f), new Vector3(6f, alturaParedes, espessuraParedes), matParede, "Parede_Norte_T");
         CriarBlocoParede(m_ContainerParedes.transform, new Vector3(0f, yCentro, -8.5f), new Vector3(6f, alturaParedes, espessuraParedes), matParede, "Parede_Sul_T");
+
+        // Blocos de contorno lateral para corredores em anel (Loops de fuga)
+        CriarBlocoParede(m_ContainerParedes.transform, new Vector3(-10.5f, yCentro, 0f), new Vector3(espessuraParedes, alturaParedes, 4.5f), matParede, "Parede_Loop_Oeste");
+        CriarBlocoParede(m_ContainerParedes.transform, new Vector3(10.5f, yCentro, 0f), new Vector3(espessuraParedes, alturaParedes, 4.5f), matParede, "Parede_Loop_Leste");
 
         // 3. WAYFINDING SEMÂNTICO: Detecta bifurcações e inícios de corredores para instanciar Placas de Sinalização TBox
         if (instanciarPlacasSinalizacao)
@@ -2658,6 +3917,20 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
         }
     }
 
+    private void CriarGatilhoWarpTunel(Transform pai, Vector3 posicao, Vector3 tamanho, Vector3 destinoWarp, string nome)
+    {
+        GameObject gatilho = new GameObject(nome);
+        gatilho.transform.SetParent(pai, false);
+        gatilho.transform.position = posicao;
+
+        BoxCollider col = gatilho.AddComponent<BoxCollider>();
+        col.isTrigger = true;
+        col.size = tamanho;
+
+        TunelTeletransporteWarp warp = gatilho.AddComponent<TunelTeletransporteWarp>();
+        warp.pontoDestino = destinoWarp;
+    }
+
     private GameObject CriarBlocoParede(Transform pai, Vector3 pos, Vector3 escala, Material mat, string nome)
     {
         GameObject parede = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -2703,9 +3976,11 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
     // =========================================================================
 
     /// <summary>
-    /// Gera o Grafo VirtOnto canônico com classes TBox, indivíduos ABox e axiomas ALCQ(D).
+    /// Gera o Grafo Ontológico canônico com classes TBox, indivíduos ABox e axiomas ALCQ(D).
     /// </summary>
-    public Graph ConstruirGrafoVirtOntoPadrao()
+    
+    public Graph ConstruirGrafoVirtOntoPadrao() => ConstruirGrafoOntologicoPadrao();
+    public Graph ConstruirGrafoOntologicoPadrao()
     {
         Graph graph;
 
@@ -2729,14 +4004,14 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
         return graph;
     }
 
-    [ContextMenu("Pac-Man Semântico/Construir e Indexar Grafo VirtOnto (OWL-SWRL)")]
-    public void MenuConstruirGrafoVirtOnto()
+    [ContextMenu("Pac-Man Semântico/Construir e Indexar Grafo Ontológico (OWL-SWRL)")]
+    public void MenuConstruirGrafoOntologico()
     {
-        GrafoOntologico = ConstruirGrafoVirtOntoPadrao();
+        GrafoOntologico = ConstruirGrafoOntologicoPadrao();
         m_TotalNosGrafo = GrafoOntologico.GetNodeCount();
         m_TotalArestasGrafo = GrafoOntologico.GetEdgeCount();
 
-        Debug.Log($"<color=#00DDFF><b>[VirtOnto C#]</b></color> Grafo construído com sucesso! " +
+        Debug.Log($"<color=#00DDFF><b>[Pac-Man Semântico C#]</b></color> Grafo construído com sucesso! " +
                   $"Nós: {m_TotalNosGrafo}, Arestas: {m_TotalArestasGrafo}.");
     }
 
@@ -2745,10 +4020,10 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
     {
         if (GrafoOntologico == null || GrafoOntologico.GetNodeCount() == 0)
         {
-            MenuConstruirGrafoVirtOnto();
+            MenuConstruirGrafoOntologico();
         }
 
-        GrafoOntologico.AvaliarRegrasSWRL(msg => Debug.Log($"<color=#9B59B6><b>[VirtOnto SWRL]</b></color> {msg}"));
+        GrafoOntologico.AvaliarRegrasSWRL(msg => Debug.Log($"<color=#9B59B6><b>[Pac-Man Semântico SWRL]</b></color> {msg}"));
     }
 
     [ContextMenu("Pac-Man Semântico/Sincronizar com Backend Java (Spring Boot)")]
@@ -2763,7 +4038,7 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
 
     /// <summary>
     /// Localiza uma instância ativa por seu identificador único de ontologia,
-    /// consultando prioritariamente o Grafo VirtOnto O(1) e depois a lista de instâncias.
+    /// consultando prioritariamente o Grafo Ontológico O(1) e depois a lista de instâncias.
     /// </summary>
     public IInstanciaSemantica ObterInstanciaPorId(string id)
     {
@@ -2777,12 +4052,12 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
     }
 
     /// <summary>
-    /// Retorna o nó ontológico correspondente no Grafo VirtOnto O(1).
+    /// Retorna o nó ontológico correspondente no Grafo Ontológico O(1).
     /// </summary>
     public Node ObterNoDoGrafo(string id) => GrafoOntologico?.GetNode(id);
 
     /// <summary>
-    /// Retorna todos os nós individuais ativos indexados no Grafo VirtOnto.
+    /// Retorna todos os nós individuais ativos indexados no Grafo Ontológico.
     /// </summary>
     public IReadOnlyList<Node> ObterNosIndividuos() => GrafoOntologico?.GetNodesByType(NodeType.INDIVIDUAL);
 
@@ -2807,8 +4082,10 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
         for (int i = transform.childCount - 1; i >= 0; i--)
         {
             Transform filho = transform.GetChild(i);
-            // PROTEÇÃO DO LABIRINTO: Nunca destrói as paredes do labirinto ao limpar gemas/fantasmas
-            if (!destruirParedes && (filho.name == "Labirinto_Paredes_3D" || filho.gameObject == m_ContainerParedes))
+            // PROTEÇÃO DO LABIRINTO: Nunca destrói as paredes do labirinto ou decorações temáticas ao limpar gemas/fantasmas
+            if (!destruirParedes && (filho.name == "Labirinto_Paredes_3D" || filho.gameObject == m_ContainerParedes ||
+                filho.name == "Decoracoes_Classico_3D" || filho.gameObject == m_ContainerDecoracoesClassico ||
+                filho.name == "Decoracoes_Natal_3D" || filho.gameObject == m_ContainerDecoracoesNatal))
             {
                 continue;
             }
@@ -2829,6 +4106,82 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
         m_TotalInstanciasInstanciadas = 0;
         InstanciaSemanticaBase.instanciasValidasRestantes = 0;
         motorRaciocinio?.ResetarEstados();
+    }
+
+    /// <summary>
+    /// Reinicia completamente as orbes, pontuação, fantasmas e posições para uma nova partida limpa.
+    /// Garante que nenhuma orbe capturada anteriormente permaneça marcada como coletada.
+    /// </summary>
+    public void ReiniciarLabirintoEInstancias()
+    {
+        // 1. Destrói qualquer orbe remanescente de partidas anteriores (Zero Cache / Estado Limpo)
+        var gemas = FindObjectsByType<GemaValidaSemantica>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        for (int i = 0; i < gemas.Length; i++)
+        {
+            if (gemas[i] != null)
+            {
+                Destroy(gemas[i].gameObject);
+            }
+        }
+        if (m_OrbeAtivaAtual != null)
+        {
+            Destroy(m_OrbeAtivaAtual);
+            m_OrbeAtivaAtual = null;
+        }
+
+        // 2. Reseta integralmente os contadores estáticos e a fila sequencial
+        m_IndiceOrbeAtual = 0;
+        m_TotalOrbesSequencia = m_FilaNodosOrbes.Count > 0 ? m_FilaNodosOrbes.Count : 12;
+        InstanciaSemanticaBase.instanciasValidasRestantes = m_TotalOrbesSequencia;
+        InstanciaSemanticaBase.totalColetadas = 0;
+        InstanciaSemanticaBase.pontuacaoLogica = 0;
+        GemaValidaSemantica.totalColetadas = 0;
+        GemaValidaSemantica.pontuacaoLogica = 0;
+
+        // 3. Reposiciona e reseta os fantasmas para o interior da gaiola central
+        var fantasmas = FindObjectsByType<ObstaculoInvalidoSemantico>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        for (int i = 0; i < fantasmas.Length; i++)
+        {
+            if (fantasmas[i] != null)
+            {
+                int slotIdx = i % s_SpawnsGaiolaCentral.Length;
+                Vector3 slotPos = s_SpawnsGaiolaCentral[slotIdx];
+                float atraso = s_AtrasosSaidaGaiola[slotIdx];
+                fantasmas[i].transform.position = slotPos;
+                fantasmas[i].ConfigurarSpawnGaiola(slotPos, atraso, s_PosicaoSaidaGaiola);
+                fantasmas[i].gameObject.SetActive(true);
+            }
+        }
+
+        // 4. Reseta jogador para o spawn inicial seguro
+        var ctrl = FindFirstObjectByType<ControladorXRJogador>();
+        if (ctrl != null)
+        {
+            ctrl.transform.position = new Vector3(0f, 0.0f, -5.0f);
+            ctrl.vidasRestantes = 3;
+            ctrl.PararMovimentoTotal();
+            ctrl.AlinharBaseAoChao();
+        }
+
+        // 5. Reseta motor de raciocínio ontológico
+        if (motorRaciocinio != null)
+        {
+            motorRaciocinio.ResetarEstados();
+        }
+
+        // 6. Reseta painel do grafo Protégé
+        if (PainelGrafoSemanticoProtege.Instancia != null)
+        {
+            PainelGrafoSemanticoProtege.Instancia.ReiniciarMetricas();
+        }
+
+        // 7. Spawna a PRIMEIRA orbe (#1) da nova partida
+        if (m_FilaNodosOrbes.Count > 0)
+        {
+            SpawnarOrbeAtual();
+        }
+
+        Debug.Log("<color=#00FF99><b>[GerenciadorCenarioSemantico]</b></color> Partida reiniciada com sucesso! Estado 100% limpo, orbe #1 instanciada.");
     }
 
     private GameObject ConstruirPortalSaidaProcedural(Transform pai, Vector3 pos, Material matParede)
@@ -2866,7 +4219,8 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
         trimTopo.transform.SetParent(vigaTopo.transform, false);
         trimTopo.transform.localPosition = new Vector3(0f, -0.45f, 0f);
         trimTopo.transform.localScale = new Vector3(1.05f, 0.15f, 1.05f);
-        Destroy(trimTopo.GetComponent<Collider>());
+        Collider colTrim = trimTopo.GetComponent<Collider>();
+        if (colTrim != null) { if (Application.isPlaying) Destroy(colTrim); else DestroyImmediate(colTrim); }
         trimTopo.GetComponent<Renderer>().material = CriarMaterialNeonLED(new Color(0f, 1f, 0.6f));
 
         // 3. Anel Holografico de Contencao (gira suavemente)
@@ -2876,7 +4230,8 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
         anelContencao.transform.localPosition = new Vector3(0f, 0f, 0f);
         anelContencao.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
         anelContencao.transform.localScale = new Vector3(2.8f, 0.05f, 2.8f);
-        Destroy(anelContencao.GetComponent<Collider>());
+        Collider colAnel = anelContencao.GetComponent<Collider>();
+        if (colAnel != null) { if (Application.isPlaying) Destroy(colAnel); else DestroyImmediate(colAnel); }
         anelContencao.GetComponent<Renderer>().material = CriarMaterialNeonLED(new Color(0.1f, 0.9f, 1f));
 
         // 4. Escudo de Quarentena / Barreira de Energia
@@ -2906,7 +4261,8 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
         placa.transform.SetParent(portalObj.transform, false);
         placa.transform.localPosition = new Vector3(0f, alturaParedes * 0.55f, -0.1f);
         placa.transform.localScale = new Vector3(3.5f, 0.6f, 0.15f);
-        Destroy(placa.GetComponent<Collider>());
+        Collider colPlaca = placa.GetComponent<Collider>();
+        if (colPlaca != null) { if (Application.isPlaying) Destroy(colPlaca); else DestroyImmediate(colPlaca); }
         placa.GetComponent<Renderer>().material = CriarMaterialNeonLED(new Color(0.05f, 1f, 0.5f));
 
         // 7. Componente PortalSaidaLabirinto
@@ -2922,6 +4278,357 @@ public class GerenciadorCenarioSemantico : MonoBehaviour
         triggerGeral.center = Vector3.zero;
 
         return portalObj;
+    }
+
+
+    // =========================================================================
+    // MODELOS 3D ESPECÍFICOS: ARCADES & PACMAN-GHOST (CIN / DARK GRID)
+    // =========================================================================
+
+    private GameObject ObterPrefabPacmanGhost()
+    {
+        if (m_PrefabPacmanGhost == null)
+        {
+            m_PrefabPacmanGhost = Resources.Load<GameObject>("Models/PacmanGhost/PacmanGhost");
+#if UNITY_EDITOR
+            if (m_PrefabPacmanGhost == null)
+            {
+                m_PrefabPacmanGhost = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>("Assets/Resources/Models/PacmanGhost/PacmanGhost.fbx") ??
+                                      UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>("Assets/Models/PacmanGhost/source/PacmanGhost.fbx");
+            }
+#endif
+        }
+        return m_PrefabPacmanGhost;
+    }
+
+    private GameObject ObterPrefabArcade()
+    {
+        if (m_PrefabArcade == null)
+        {
+            m_PrefabArcade = Resources.Load<GameObject>("Models/Arcade/ArcadeMachine");
+#if UNITY_EDITOR
+            if (m_PrefabArcade == null)
+            {
+                m_PrefabArcade = UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>("Assets/Resources/Models/Arcade/ArcadeMachine.fbx") ??
+                                 UnityEditor.AssetDatabase.LoadAssetAtPath<GameObject>("Assets/Models/ArcadeAnimation/source/8cbdd9e5437a4a60bc30017ea0cf35b7.fbx.fbx");
+            }
+#endif
+        }
+        return m_PrefabArcade;
+    }
+
+    public void ConfigurarDecoracoesGrid(bool ativo)
+    {
+        if (m_ContainerDecoracoesGrid == null)
+        {
+            Transform tExistente = transform.Find("Decoracoes_Grid_3D");
+            if (tExistente != null)
+            {
+                m_ContainerDecoracoesGrid = tExistente.gameObject;
+            }
+            else if (ativo)
+            {
+                m_ContainerDecoracoesGrid = ConstruirDecoracoesGrid();
+            }
+        }
+
+        if (m_ContainerDecoracoesGrid != null)
+        {
+            m_ContainerDecoracoesGrid.SetActive(ativo);
+        }
+    }
+
+    private GameObject ConstruirDecoracoesGrid()
+    {
+        GameObject root = new GameObject("Decoracoes_Grid_3D");
+        root.transform.SetParent(transform, false);
+        root.transform.localPosition = Vector3.zero;
+
+        Shader shaderLit = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard") ?? Shader.Find("Diffuse");
+
+        // 1. Piso exterior Dark Grid Neon 180m x 180m
+        GameObject pisoExt = GameObject.CreatePrimitive(PrimitiveType.Plane);
+        pisoExt.name = "Piso_Terreno_Exterior_Grid";
+        pisoExt.transform.SetParent(root.transform, false);
+        pisoExt.transform.localPosition = new Vector3(0f, -0.04f, 0f);
+        pisoExt.transform.localScale = new Vector3(18f, 1f, 18f);
+        RemoverColisorObjeto(pisoExt);
+
+        Material matChaoGridExt = Resources.Load<Material>("DarkGridMaterial_Chao");
+        if (matChaoGridExt == null)
+        {
+            matChaoGridExt = new Material(shaderLit) { name = "Mat_Chao_Grid_Ext" };
+            Color corGridDark = new Color(0.01f, 0.02f, 0.05f);
+            if (matChaoGridExt.HasProperty("_BaseColor")) matChaoGridExt.SetColor("_BaseColor", corGridDark);
+            if (matChaoGridExt.HasProperty("_Color")) matChaoGridExt.SetColor("_Color", corGridDark);
+            if (matChaoGridExt.HasProperty("_Smoothness")) matChaoGridExt.SetFloat("_Smoothness", 0.65f);
+        }
+        pisoExt.GetComponent<Renderer>().material = matChaoGridExt;
+
+        // 2. APENAS UM ÚNICO FLIPERAMA DO LADO DE FORA DO MAPA COMO EASTER EGG (na mesma altura das paredes = 2.60m)
+        GameObject prefabArcade = ObterPrefabArcade();
+        Vector3 posEasterEgg = new Vector3(14.5f, 0f, 14.5f);
+        Quaternion rotEasterEgg = Quaternion.Euler(0f, 225f, 0f);
+
+        GameObject fliperama;
+        if (prefabArcade != null)
+        {
+            fliperama = Instantiate(prefabArcade, root.transform, false);
+            fliperama.name = "Fliperama_EasterEgg_Grid";
+            fliperama.transform.position = posEasterEgg;
+            fliperama.transform.rotation = rotEasterEgg;
+
+            // Calibração de altura precisa baseada na geometria real do FBX
+            MeshFilter[] mfs = fliperama.GetComponentsInChildren<MeshFilter>();
+            float minY = float.MaxValue;
+            float maxY = float.MinValue;
+            for (int m = 0; m < mfs.Length; m++)
+            {
+                if (mfs[m] != null && mfs[m].sharedMesh != null)
+                {
+                    Bounds mb = mfs[m].sharedMesh.bounds;
+                    Vector3 wMin = mfs[m].transform.TransformPoint(mb.min);
+                    Vector3 wMax = mfs[m].transform.TransformPoint(mb.max);
+                    Vector3 lMin = fliperama.transform.InverseTransformPoint(wMin);
+                    Vector3 lMax = fliperama.transform.InverseTransformPoint(wMax);
+                    if (lMin.y < minY) minY = lMin.y;
+                    if (lMax.y > maxY) maxY = lMax.y;
+                }
+            }
+
+            float rawH = maxY - minY;
+            float escala = (rawH > 0.01f) ? (alturaParedes / rawH) : 3.65f;
+            fliperama.transform.localScale = new Vector3(escala, escala, escala);
+            if (minY < float.MaxValue && maxY > float.MinValue)
+            {
+                fliperama.transform.position = posEasterEgg - new Vector3(0f, minY * escala, 0f);
+            }
+            RemoverColisorObjeto(fliperama);
+        }
+        else
+        {
+            fliperama = CriarFliperamaProcedural(posEasterEgg, root.transform);
+            fliperama.name = "Fliperama_EasterEgg_Grid_Procedural";
+            fliperama.transform.rotation = rotEasterEgg;
+        }
+
+        // Ponto de luz sutil no Easter Egg para destaque neon
+        GameObject luzEggObj = new GameObject("Luz_Fliperama_EasterEgg");
+        luzEggObj.transform.SetParent(fliperama.transform, false);
+        luzEggObj.transform.localPosition = new Vector3(0f, alturaParedes * 0.7f, 0.8f);
+        Light luzEgg = luzEggObj.AddComponent<Light>();
+        luzEgg.type = LightType.Point;
+        luzEgg.color = new Color(0.0f, 0.9f, 1.0f);
+        luzEgg.intensity = 2.0f;
+        luzEgg.range = 5.0f;
+
+        return root;
+    }
+
+    private GameObject CriarFliperamaProcedural(Vector3 pos, Transform parent)
+    {
+        Shader shaderLit = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard") ?? Shader.Find("Diffuse");
+        GameObject flip = new GameObject("Gabinete_Fliperama");
+        flip.transform.SetParent(parent, false);
+        flip.transform.position = pos;
+
+        // Corpo com a mesma altura das paredes do Grid (alturaParedes = 2.60m)
+        GameObject corpo = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        corpo.transform.SetParent(flip.transform, false);
+        corpo.transform.localPosition = new Vector3(0f, alturaParedes * 0.5f, 0f);
+        corpo.transform.localScale = new Vector3(0.95f, alturaParedes, 1.05f);
+        RemoverColisorObjeto(corpo);
+        Material matGabinete = new Material(shaderLit) { color = new Color(0.04f, 0.05f, 0.09f) };
+        corpo.GetComponent<Renderer>().material = matGabinete;
+
+        // Tela brilhante
+        GameObject tela = GameObject.CreatePrimitive(PrimitiveType.Quad);
+        tela.transform.SetParent(flip.transform, false);
+        tela.transform.localPosition = new Vector3(0f, alturaParedes * 0.65f, 0.53f);
+        tela.transform.localScale = new Vector3(0.75f, 0.60f, 1f);
+        RemoverColisorObjeto(tela);
+        Material matTela = new Material(shaderLit);
+        matTela.color = new Color(0.0f, 0.90f, 1.0f);
+        if (matTela.HasProperty("_EmissionColor"))
+        {
+            matTela.EnableKeyword("_EMISSION");
+            matTela.SetColor("_EmissionColor", new Color(0.0f, 0.70f, 1.0f) * 1.6f);
+        }
+        tela.GetComponent<Renderer>().material = matTela;
+
+        return flip;
+    }
+
+    /// <summary>
+    /// Revertido a pedido do usuário: Mantém 100% dos assets procedurais originais do Pac-Man e dos Fantasmas
+    /// no Mapa do CIn (e em todos os mapas). Remove e destrói quaisquer instâncias residuais de modelos FBX.
+    /// </summary>
+    public void ConfigurarModelosTemaClassicoCIn(bool ativo)
+    {
+        // 1. Pac-Man: Garante restauração e ativação dos modelos procedurais originais
+        GameObject visualPac = GameObject.Find("VisualComeCome") ?? GameObject.Find("Visual_PacMan");
+        if (visualPac != null)
+        {
+            Transform tModeloCIn = visualPac.transform.Find("Visual_PacMan_CIn_FBX");
+            if (tModeloCIn != null)
+            {
+                if (Application.isPlaying) Destroy(tModeloCIn.gameObject);
+                else DestroyImmediate(tModeloCIn.gameObject);
+            }
+
+            var rendsRaiz = visualPac.GetComponents<Renderer>();
+            for (int r = 0; r < rendsRaiz.Length; r++) rendsRaiz[r].enabled = true;
+
+            var animBoca = visualPac.GetComponent<AnimacaoBocaPacMan>();
+            if (animBoca != null) animBoca.enabled = true;
+
+            for (int c = 0; c < visualPac.transform.childCount; c++)
+            {
+                visualPac.transform.GetChild(c).gameObject.SetActive(true);
+            }
+        }
+
+        // 2. Os 4 Fantasmas: Restaura cápsula procedural, olhos e pupilas originais sem modelo FBX
+        var fantasmas = FindObjectsByType<ObstaculoInvalidoSemantico>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        for (int i = 0; i < fantasmas.Length; i++)
+        {
+            if (fantasmas[i] == null) continue;
+            Transform fTransform = fantasmas[i].transform;
+            Transform tGhostCIn = fTransform.Find("Visual_Fantasma_CIn_FBX");
+            if (tGhostCIn != null)
+            {
+                if (Application.isPlaying) Destroy(tGhostCIn.gameObject);
+                else DestroyImmediate(tGhostCIn.gameObject);
+            }
+
+            for (int c = 0; c < fTransform.childCount; c++)
+            {
+                fTransform.GetChild(c).gameObject.SetActive(true);
+            }
+
+            var anim = fTransform.GetComponent<AnimacaoFantasma>();
+            if (anim != null) anim.enabled = true;
+        }
+    }
+
+    /// <summary>
+    /// Configura o totem 3D do CIn (utilizando studio_mesh) EXCLUSIVAMENTE na entrada do portão do Mapa Grid.
+    /// Nos demais temas, desativa este asset.
+    /// </summary>
+    public void ConfigurarTotemPortaoGrid(bool ativo)
+    {
+        if (m_TotemCInPortao == null)
+        {
+            Transform tExistente = (m_ContainerParedes != null) ? m_ContainerParedes.transform.Find("Totem_CIn_Portao_Grid") : transform.Find("Totem_CIn_Portao_Grid");
+            if (tExistente != null)
+            {
+                m_TotemCInPortao = tExistente.gameObject;
+            }
+            else if (ativo)
+            {
+                m_TotemCInPortao = ConstruirTotemCInPortao();
+            }
+        }
+
+        if (m_TotemCInPortao != null)
+        {
+            m_TotemCInPortao.SetActive(ativo);
+        }
+
+        // Se ativo no Grid, oculta a antiga placa wayfinding ou barreira na entrada do portão
+        if (m_PlacasWayfinding != null)
+        {
+            for (int i = 0; i < m_PlacasWayfinding.Count; i++)
+            {
+                if (m_PlacasWayfinding[i] != null && m_PlacasWayfinding[i].idBifurcacao == "Bifurcacao_Central_Norte")
+                {
+                    m_PlacasWayfinding[i].gameObject.SetActive(!ativo);
+                }
+            }
+        }
+
+        // Oculta a placa/escudo do portal de saída norte se presente no Grid
+        var portal = FindFirstObjectByType<PortalSaidaLabirinto>();
+        if (portal != null && portal.escudoEnergia != null)
+        {
+            portal.escudoEnergia.SetActive(!ativo);
+        }
+    }
+
+    private GameObject ConstruirTotemCInPortao()
+    {
+        Transform pai = (m_ContainerParedes != null) ? m_ContainerParedes.transform : transform;
+        GameObject totemObj = new GameObject("Totem_CIn_Portao_Grid");
+        totemObj.transform.SetParent(pai, false);
+        // Posicionado na entrada do portão norte (X = -2.6m, Z = 11.5m), perfeitamente visível
+        totemObj.transform.position = new Vector3(-2.6f, 0f, 11.5f);
+        totemObj.transform.rotation = Quaternion.Euler(0f, 180f, 0f);
+
+        Shader shaderLit = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard") ?? Shader.Find("Diffuse");
+
+        // 1. Base pedestal concreto 3D
+        GameObject pedestal = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        pedestal.name = "Base_Pedestal";
+        pedestal.transform.SetParent(totemObj.transform, false);
+        pedestal.transform.localPosition = new Vector3(0f, 0.12f, 0f);
+        pedestal.transform.localScale = new Vector3(2.20f, 0.24f, 0.50f);
+        RemoverColisorObjeto(pedestal);
+        pedestal.GetComponent<Renderer>().material = new Material(shaderLit) { color = new Color(0.22f, 0.24f, 0.28f) };
+
+        // 2. Painel com textura de recorte studio_mesh (Totem CIn + Poste)
+        Texture2D texTotem = Resources.Load<Texture2D>("Textures/studio_mesh");
+#if UNITY_EDITOR
+        if (texTotem == null)
+        {
+            texTotem = UnityEditor.AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Textures/studio_mesh.png") ??
+                       UnityEditor.AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Textures/studio_mesh.webp");
+        }
+#endif
+
+        Material matTotem = new Material(shaderLit);
+        matTotem.name = "Mat_Totem_CIn_Gate";
+        if (texTotem != null)
+        {
+            matTotem.mainTexture = texTotem;
+            if (matTotem.HasProperty("_BaseMap")) matTotem.SetTexture("_BaseMap", texTotem);
+        }
+
+        // Ativa recorte Alpha Cutout (Alpha Test)
+        if (matTotem.HasProperty("_AlphaClip")) matTotem.SetFloat("_AlphaClip", 1f);
+        if (matTotem.HasProperty("_Cutoff")) matTotem.SetFloat("_Cutoff", 0.35f);
+        matTotem.EnableKeyword("_ALPHATEST_ON");
+        matTotem.renderQueue = 2450;
+
+        // Face Frontal
+        GameObject faceFrente = GameObject.CreatePrimitive(PrimitiveType.Quad);
+        faceFrente.name = "Face_Frontal";
+        faceFrente.transform.SetParent(totemObj.transform, false);
+        faceFrente.transform.localPosition = new Vector3(0f, 1.25f, 0.02f);
+        faceFrente.transform.localScale = new Vector3(2.10f, 2.00f, 1f);
+        RemoverColisorObjeto(faceFrente);
+        faceFrente.GetComponent<Renderer>().material = matTotem;
+
+        // Face Traseira
+        GameObject faceTraseira = GameObject.CreatePrimitive(PrimitiveType.Quad);
+        faceTraseira.name = "Face_Traseira";
+        faceTraseira.transform.SetParent(totemObj.transform, false);
+        faceTraseira.transform.localPosition = new Vector3(0f, 1.25f, -0.02f);
+        faceTraseira.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
+        faceTraseira.transform.localScale = new Vector3(2.10f, 2.00f, 1f);
+        RemoverColisorObjeto(faceTraseira);
+        faceTraseira.GetComponent<Renderer>().material = matTotem;
+
+        // 3. Luz do Poste de Iluminação do CIn
+        GameObject luzPoste = new GameObject("Luz_Poste_CIn");
+        luzPoste.transform.SetParent(totemObj.transform, false);
+        luzPoste.transform.localPosition = new Vector3(-0.65f, 2.30f, 0.15f);
+        Light pLight = luzPoste.AddComponent<Light>();
+        pLight.type = LightType.Point;
+        pLight.color = new Color(1.0f, 0.95f, 0.85f);
+        pLight.intensity = 2.8f;
+        pLight.range = 5.0f;
+
+        return totemObj;
     }
 
 }

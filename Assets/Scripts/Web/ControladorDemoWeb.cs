@@ -131,8 +131,25 @@ namespace PacMan.Web
 
             if (pacmanTransform != null)
             {
+                // Se ControladorXRJogador estiver gerenciando o jogador, delega integralmente a física e spawn
+                if (pacmanTransform.GetComponent<ControladorXRJogador>() != null)
+                {
+                    m_VisualPacMan = GameObject.Find("Visual_PacMan");
+                    if (ghostBlinkyTransform == null)
+                    {
+                        GameObject blinky = GameObject.Find("Fantasma_Blinky") ?? GameObject.Find("Blinky") ?? GameObject.Find("Fantasma_0");
+                        if (blinky != null) ghostBlinkyTransform = blinky.transform;
+                    }
+                    if (ghostTransform == null && ghostBlinkyTransform != null)
+                    {
+                        ghostTransform = ghostBlinkyTransform;
+                    }
+                    m_CameraPrincipal = Camera.main;
+                    return;
+                }
+
                 pacmanTransform.gameObject.SetActive(true);
-                pontoSpawnInicial = new Vector3(0f, 0.0f, -6.0f);
+                pontoSpawnInicial = new Vector3(0f, 0.0f, -5.0f);
                 pacmanTransform.position = pontoSpawnInicial;
 
                 m_CharacterController = pacmanTransform.GetComponent<CharacterController>();
@@ -198,6 +215,8 @@ namespace PacMan.Web
 
         public void ConfigurarVisualEPerspectivaCamera()
         {
+            if (FindFirstObjectByType<ControladorXRJogador>() != null) return;
+
             if (m_CameraPrincipal == null) m_CameraPrincipal = Camera.main;
             // Seção 2 da Especificação Mestra: O usuário está DENTRO do labirinto (visão imersiva rente ao corredor)
             if (modoCamera == ModoCamera.Pinball3D || modoCamera == ModoCamera.MesaCompletaPinball)
@@ -267,6 +286,9 @@ namespace PacMan.Web
 
         private void LateUpdate()
         {
+            // Se o ControladorXRJogador estiver na cena, ele gerencia a câmera soberanamente
+            if (FindFirstObjectByType<ControladorXRJogador>() != null) return;
+
             if (m_CameraPrincipal == null || pacmanTransform == null) return;
 
             Transform camTransform = m_CameraPrincipal.transform;

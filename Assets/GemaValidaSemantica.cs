@@ -19,27 +19,27 @@ public class GemaValidaSemantica : InstanciaSemanticaBase
     [Tooltip("Intensidade do brilho emissivo em RV/RA.")]
     public float intensidadeBrilho = 1.2f;
 
-    [Header("Comportamento de Fuga Dinâmica (Parasita Vivo)")]
-    [Tooltip("Habilita o comportamento tático de afastamento quando o Pac-Man se aproxima.")]
-    public new bool habilitarFuga = false;
+    [Tooltip("Raio do colisor Trigger para captura estrita por toque físico.")]
+    public float raioCaptura = 0.35f;
 
-    [Tooltip("Distância limite para iniciar a evasão tática (estritamente 3.0 metros).")]
-    public new float raioDeteccaoFuga = 2.8f;
+    [Header("Missão Sequencial e Poder")]
+    [Tooltip("Se verdadeiro, esta orbe concede o poder de devorar fantasmas (estritamente 1 a cada 3 orbes).")]
+    public bool ehOrbeDePoder = false;
 
-    [Tooltip("Velocidade com que a gema se afasta pelos corredores (estritamente 50% da velocidade do jogador = 1.9 m/s).")]
-    public new float velocidadeFuga = 1.6f;
+    [Tooltip("Índice sequencial desta orbe na missão.")]
+    public int indiceOrbe = 1;
 
-    [Tooltip("Raio do colisor Trigger para captura tática facilitada.")]
-    public float raioCaptura = 1.8f;
+    [Tooltip("Total de orbes da missão ontológica.")]
+    public int totalOrbes = 12;
 
     protected override void Awake()
     {
         base.Awake();
         m_EhValida = true;
         m_ValorPontuacao = 10;
-        base.raioDeteccaoFuga = raioDeteccaoFuga;
-        base.velocidadeFuga = velocidadeFuga;
-        base.habilitarFuga = habilitarFuga;
+        habilitarFuga = false;
+        raioDeteccaoFuga = 2.8f;
+        velocidadeFuga = 1.6f;
 
         // Remoção imediata de NavMeshAgent ou script de fuga para garantir Pac-Dots 100% estáticos
         UnityEngine.AI.NavMeshAgent nav = GetComponent<UnityEngine.AI.NavMeshAgent>();
@@ -68,14 +68,9 @@ public class GemaValidaSemantica : InstanciaSemanticaBase
         if (sc == null)
         {
             sc = gameObject.AddComponent<SphereCollider>();
-            sc.isTrigger = true;
-            sc.radius = raioCaptura;
         }
-        else
-        {
-            sc.isTrigger = true;
-            sc.radius = Mathf.Max(sc.radius, raioCaptura);
-        }
+        sc.isTrigger = true;
+        sc.radius = raioCaptura;
 
         // Garante que a física seja cinemática (sem forças ou empurrões físicos)
         Rigidbody rb = GetComponent<Rigidbody>();
@@ -91,26 +86,52 @@ public class GemaValidaSemantica : InstanciaSemanticaBase
     {
         base.Update();
 
-        // Coleta automática por proximidade absoluta vinculada EXCLUSIVAMENTE ao corpo do Pac-Man
+        // Coleta automática por proximidade absoluta vinculada ao corpo do Pac-Man / ControladorXRJogador
         if (!m_Coletada)
         {
+            var ctrl = FindAnyObjectByType<ControladorXRJogador>();
+            if (ctrl == null || !ctrl.controlesHabilitados) return;
+
             GameObject pacmanCorpo = GameObject.Find("Visual_PacMan");
-            if (pacmanCorpo != null)
+            if (pacmanCorpo == null) pacmanCorpo = ctrl.gameObject;
+
+            Vector2 posGema2D = new Vector2(transform.position.x, transform.position.z);
+            Vector2 posPac2D = new Vector2(pacmanCorpo.transform.position.x, pacmanCorpo.transform.position.z);
+            float distHorizontal = Vector2.Distance(posGema2D, posPac2D);
+            float diffVertical = Mathf.Abs(transform.position.y - pacmanCorpo.transform.position.y);
+            // Captura justa e proporcional: raio de 0.85m (compatível com a boca e corpo do Pac-Man)
+            if (distHorizontal <= 0.85f && diffVertical < 1.10f)
             {
-                Vector2 posGema2D = new Vector2(transform.position.x, transform.position.z);
-                Vector2 posPac2D = new Vector2(pacmanCorpo.transform.position.x, pacmanCorpo.transform.position.z);
-                float distHorizontal = Vector2.Distance(posGema2D, posPac2D);
-                float diffVertical = Mathf.Abs(transform.position.y - pacmanCorpo.transform.position.y);
-                if (distHorizontal <= 1.45f && diffVertical < 1.8f)
-                {
-                    AoExecutarColeta(pacmanCorpo, ehRaycast: false);
-                }
+                AoExecutarColeta(pacmanCorpo, ehRaycast: false);
+            }
+        }
+    }
+
+    protected override void OnTriggerEnter(Collider other)
+    {
+        if (m_Coletada) return;
+        if (other == null) return;
+
+        var ctrl = other.GetComponentInParent<ControladorXRJogador>();
+        if (ctrl != null && ctrl.controlesHabilitados)
+        {
+            // Validação estrita por proximidade proporcional (<= 0.85m)
+            Vector2 posGema2D = new Vector2(transform.position.x, transform.position.z);
+            Vector2 posPac2D = new Vector2(ctrl.transform.position.x, ctrl.transform.position.z);
+            float distHorizontal = Vector2.Distance(posGema2D, posPac2D);
+            if (distHorizontal <= 0.85f)
+            {
+                AoExecutarColeta(ctrl.gameObject, ehRaycast: false);
             }
         }
     }
 
     protected override void AoExecutarColeta(GameObject interator, bool ehRaycast)
     {
+        // Se controles estiverem desabilitados (Hub aberto ou Game Over), ignora coleta
+        var ctrlJogador = FindAnyObjectByType<ControladorXRJogador>();
+        if (ctrlJogador != null && !ctrlJogador.controlesHabilitados) return;
+
         // REJEIÇÃO ABSOLUTA: Câmera ou tela NÃO coletam gemas
         if (!ehRaycast && interator != null)
         {
@@ -138,11 +159,27 @@ public class GemaValidaSemantica : InstanciaSemanticaBase
         // 2. Atualiza o HUD em tempo real com a classe em foco
         AtualizarHUDs(m_Id, nomeClasseFormatado, m_ValorPontuacao, m_ExpressaoDL, m_DescricaoSemantica);
 
-        // 3. Emite feedback visual cibernético e háptico e acalma os fantasmas (Azuis por 6s)
-        var motor = FindFirstObjectByType<PacMan.Semantics.MotorRaciocinioSemantico>();
-        if (motor != null)
+        // 3. REGRA DE PODER: estritamente 1 a cada 3 orbes concede o poder de devorar fantasmas!
+        if (ehOrbeDePoder)
         {
-            motor.AtivarPowerPellet(6.0f);
+            var motor = FindFirstObjectByType<PacMan.Semantics.MotorRaciocinioSemantico>();
+            if (motor != null)
+            {
+                motor.AtivarPowerPellet(8.0f);
+            }
+            Debug.Log($"<color=#FFD700><b>[PODER ESPECIAL (1 A CADA 3)]</b></color> Orbe #{indiceOrbe} concedeu modo Power Pellet por 8s!");
+        }
+
+        // 4. Notifica o Gerenciador de Cenário para avançar a sequência e spawnar a próxima orbe
+        if (GerenciadorCenarioSemantico.Instancia != null)
+        {
+            GerenciadorCenarioSemantico.Instancia.NotificarOrbeColetada(this);
+        }
+
+        // 5. Exibe Banner na lateral inferior da tela com o nome ontológico do elemento
+        if (PainelGrafoSemanticoProtege.Instancia != null)
+        {
+            PainelGrafoSemanticoProtege.Instancia.ExibirBannerOrbeColetada(nomeClasseFormatado, m_Id, m_ExpressaoDL, ehOrbeDePoder, indiceOrbe, totalOrbes);
         }
 
         EmitirFeedbackHaptico(interator, 0.35f, 0.12f);
@@ -153,9 +190,24 @@ public class GemaValidaSemantica : InstanciaSemanticaBase
         }
         CriarEfeitoVisual(sucesso: true);
 
-        // 4. Em vez de destruir o Nodo como uma gema de arcade, mantém o Nodo ancorado no espaço
-        // com brilho de instância ativa para exibir visualmente as linhas do RelationBuilder (LineRenderer)
-        Collider[] cols = GetComponentsInChildren<Collider>();
+        // 6. Desativa completamente visual e colisão: orbe capturada some na hora (sem deixar asset vazio)
+        Renderer[] rends = GetComponentsInChildren<Renderer>(true);
+        if (rends != null)
+        {
+            for (int i = 0; i < rends.Length; i++)
+            {
+                if (rends[i] != null) rends[i].enabled = false;
+            }
+        }
+        Light[] luzes = GetComponentsInChildren<Light>(true);
+        if (luzes != null)
+        {
+            for (int i = 0; i < luzes.Length; i++)
+            {
+                if (luzes[i] != null) luzes[i].enabled = false;
+            }
+        }
+        Collider[] cols = GetComponentsInChildren<Collider>(true);
         if (cols != null)
         {
             for (int i = 0; i < cols.Length; i++)
@@ -163,7 +215,41 @@ public class GemaValidaSemantica : InstanciaSemanticaBase
                 if (cols[i] != null) cols[i].enabled = false;
             }
         }
-        transform.localScale = transform.localScale * 0.88f;
+
+        // Destrói o objeto da orbe capturada definitivamente da cena (sem poluir memória ou cache)
+        Destroy(gameObject, 0.15f);
+    }
+
+    /// <summary>
+    /// Restaura completamente a gema para uma nova rodada limpa.
+    /// </summary>
+    public void ReiniciarGemaParaNovaPartida()
+    {
+        m_Coletada = false;
+        Renderer[] rends = GetComponentsInChildren<Renderer>(true);
+        if (rends != null)
+        {
+            for (int i = 0; i < rends.Length; i++)
+            {
+                if (rends[i] != null) rends[i].enabled = true;
+            }
+        }
+        Light[] luzes = GetComponentsInChildren<Light>(true);
+        if (luzes != null)
+        {
+            for (int i = 0; i < luzes.Length; i++)
+            {
+                if (luzes[i] != null) luzes[i].enabled = true;
+            }
+        }
+        Collider[] cols = GetComponentsInChildren<Collider>(true);
+        if (cols != null)
+        {
+            for (int i = 0; i < cols.Length; i++)
+            {
+                if (cols[i] != null) cols[i].enabled = true;
+            }
+        }
     }
 
     private void GarantirGeometriaPrismaTranslucido()

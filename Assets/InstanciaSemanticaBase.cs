@@ -98,6 +98,8 @@ public abstract class InstanciaSemanticaBase : MonoBehaviour, IInstanciaSemantic
 
     public IReadOnlyDictionary<string, string> PropriedadesDL => m_PropriedadesDL;
 
+    public bool Coletada => m_Coletada;
+
     // =========================================================================
     // CICLO DE VIDA DO UNITY
     // =========================================================================
@@ -133,6 +135,12 @@ public abstract class InstanciaSemanticaBase : MonoBehaviour, IInstanciaSemantic
             rb.useGravity = false;
             rb.linearVelocity = Vector3.zero;
         }
+
+        Transform trRotulo = transform.Find("Rotulo_3D_Item_Ontologico");
+        if (trRotulo != null && !RelationBuilder.exibirRotulosFlutuantes)
+        {
+            trRotulo.gameObject.SetActive(false);
+        }
     }
 
     [Header("Inspeção Semântica por Proximidade")]
@@ -163,6 +171,12 @@ public abstract class InstanciaSemanticaBase : MonoBehaviour, IInstanciaSemantic
 
     public void AtualizarRotulo3DInicial()
     {
+        Transform trOld = transform.Find("Rotulo_3D_Item_Ontologico");
+        if (!RelationBuilder.exibirRotulosFlutuantes)
+        {
+            if (trOld != null) trOld.gameObject.SetActive(false);
+            return;
+        }
         if (!m_EhValida) return;
         string nomeFormatado = FormatarNomeClasse(m_NomeClasse);
         string tipo = RelationBuilder.ClassificarTipoElementoOntologico(m_NomeClasse, m_ExpressaoDL);
@@ -644,6 +658,12 @@ public abstract class InstanciaSemanticaBase : MonoBehaviour, IInstanciaSemantic
             }
             string edgeId = $"edge_instantiates_{id}_{Time.frameCount}";
             grafo.AddEdge(new VirtOnto.Model.Edge(edgeId, "researcher_01", id, "instantiates"));
+        }
+
+        // 3. Atualiza o Painel do Grafo Semântico Protégé (Desata nós e acende conexões em tempo real)
+        if (PainelGrafoSemanticoProtege.Instancia != null)
+        {
+            PainelGrafoSemanticoProtege.Instancia.NotificarConsumoOntologico(id, nomeClasse);
         }
     }
 

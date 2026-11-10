@@ -82,6 +82,10 @@ public class RelationBuilder : MonoBehaviour
     private readonly List<EloRedeNeuralOntologica> m_CadeiaRedeNeural = new List<EloRedeNeuralOntologica>();
     public IReadOnlyList<EloRedeNeuralOntologica> CadeiaRedeNeural => m_CadeiaRedeNeural;
 
+    [Header("Visibilidade e Minimalismo")]
+    public static bool exibirRotulosFlutuantes = false;
+    public bool exibirLinhasEspaciais = false;
+
     private LineRenderer m_LinhaGuiaPacMan;
     private Material m_MaterialLinha;
     private int m_IndicePropriedade = 0;
@@ -91,6 +95,14 @@ public class RelationBuilder : MonoBehaviour
         Instance = this;
         PrepararMaterialLinha();
         LimparLinhasTemporariasOrfas();
+        if (!exibirLinhasEspaciais)
+        {
+            LineRenderer[] todasLinhas = FindObjectsByType<LineRenderer>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            for (int i = 0; i < todasLinhas.Length; i++)
+            {
+                if (todasLinhas[i] != null) todasLinhas[i].enabled = false;
+            }
+        }
     }
 
     private void OnEnable()
@@ -146,7 +158,7 @@ public class RelationBuilder : MonoBehaviour
         }
 
         // Atualiza a Linha Guia da Rede Neural que sai do ÚLTIMO item comido e segue atrás do Pac-Man
-        if (m_CadeiaRedeNeural.Count > 0)
+        if (m_CadeiaRedeNeural.Count > 0 && exibirLinhasEspaciais)
         {
             EloRedeNeuralOntologica ultimoElo = m_CadeiaRedeNeural[m_CadeiaRedeNeural.Count - 1];
             emModoConexao = true;
@@ -248,13 +260,16 @@ public class RelationBuilder : MonoBehaviour
 
             linhaSegmentoObj = new GameObject($"EloRede_{anterior.nomeClasse}_para_{nomeFormatado}", typeof(LineRenderer));
             LineRenderer lrFixo = ConfigurarLineRenderer(linhaSegmentoObj, corLinhaRedeFixada, larguraLinha);
-            lrFixo.enabled = true;
+            lrFixo.enabled = exibirLinhasEspaciais;
             lrFixo.SetPosition(0, pOrigem);
             lrFixo.SetPosition(1, pDestino);
 
             Vector3 pontoMedio = (pOrigem + pDestino) * 0.5f + Vector3.up * 0.34f;
             string textoAresta = $"🔗 {relacao}\n<size=75%>({anterior.nomeClasse} ➔ {nomeFormatado})</size>";
-            rotuloSegmentoObj = InstanciarRotuloFlutuanteTMP(linhaSegmentoObj.transform, pontoMedio, textoAresta, corLinhaRedeFixada);
+            if (exibirLinhasEspaciais && exibirRotulosFlutuantes)
+            {
+                rotuloSegmentoObj = InstanciarRotuloFlutuanteTMP(linhaSegmentoObj.transform, pontoMedio, textoAresta, corLinhaRedeFixada);
+            }
 
             m_RelacoesFixadas.Add(new RelacaoCriada
             {
@@ -430,6 +445,12 @@ public class RelationBuilder : MonoBehaviour
         if (objNodo == null) return;
 
         Transform trLabel = objNodo.transform.Find("Rotulo_3D_Item_Ontologico");
+        if (!exibirRotulosFlutuantes)
+        {
+            if (trLabel != null) trLabel.gameObject.SetActive(false);
+            return;
+        }
+
         GameObject labelObj;
         if (trLabel != null)
         {

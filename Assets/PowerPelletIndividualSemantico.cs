@@ -20,7 +20,7 @@ public class PowerPelletIndividualSemantico : InstanciaSemanticaBase
     protected override void Awake()
     {
         base.Awake();
-        m_Id = "power_pellet_individual_" + Mathf.Abs(GetInstanceID());
+        m_Id = "power_pellet_individual_" + Mathf.Abs(GetHashCode());
         m_NomeClasse = nomeIndividuo;
         m_ExpressaoDL = expressaoDLIndividuo;
         m_ValorPontuacao = 50;
@@ -94,6 +94,17 @@ public class PowerPelletIndividualSemantico : InstanciaSemanticaBase
                 if (cols[i] != null) cols[i].enabled = false;
             }
         }
+
+        Renderer[] rends = GetComponentsInChildren<Renderer>();
+        if (rends != null)
+        {
+            for (int i = 0; i < rends.Length; i++)
+            {
+                if (rends[i] != null) rends[i].enabled = false;
+            }
+        }
+
+        Destroy(gameObject, 0.25f);
         NotificarInteracao(sucesso: true);
     }
 
