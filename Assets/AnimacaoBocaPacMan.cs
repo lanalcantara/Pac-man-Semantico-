@@ -41,10 +41,20 @@ public class AnimacaoBocaPacMan : MonoBehaviour
     private float m_FaseAnimacao = 0f;
     private bool m_EstavaAberta = false;
     private Vector3 m_PosicaoAnterior;
+    private Vector3 m_EscalaBase;
+    private bool m_EscalaInicializada = false;
+    private Animator m_Animator;
 
     private void Awake()
     {
         m_PosicaoAnterior = transform.position;
+        m_Animator = GetComponentInChildren<Animator>();
+
+        if (!m_EscalaInicializada)
+        {
+            m_EscalaBase = transform.localScale != Vector3.zero ? transform.localScale : new Vector3(0.85f, 0.85f, 0.85f);
+            m_EscalaInicializada = true;
+        }
 
         // Cria ou obtém AudioSource para o feedback sonoro
         if (habilitarSomChomp)
@@ -86,12 +96,15 @@ public class AnimacaoBocaPacMan : MonoBehaviour
     private void CalcularAnimacaoBoca()
     {
         float velocidadeAtual = 1f;
+        bool seMovendo = false;
 
         if (sincronizarComMovimento)
         {
-            float deslocamento = (transform.position - m_PosicaoAnterior).magnitude / Mathf.Max(Time.deltaTime, 0.001f);
+            float deltaPos = (transform.position - m_PosicaoAnterior).magnitude;
+            float vel = deltaPos / Mathf.Max(Time.deltaTime, 0.001f);
             m_PosicaoAnterior = transform.position;
-            velocidadeAtual = Mathf.Clamp(deslocamento * 0.8f, 0.6f, 2.5f);
+            velocidadeAtual = Mathf.Clamp(vel * 0.8f, 0.6f, 2.5f);
+            seMovendo = vel > 0.05f;
         }
 
         m_FaseAnimacao += Time.deltaTime * velocidadeMordida * velocidadeAtual * Mathf.PI * 2f;
@@ -108,6 +121,29 @@ public class AnimacaoBocaPacMan : MonoBehaviour
         if (mandibulaInferior != null)
         {
             mandibulaInferior.localRotation = Quaternion.Euler(anguloAtual, 0f, 0f);
+        }
+
+        // Se houver Animator com esqueleto ósseo (FBX Pac-Man animado), sincroniza a velocidade da mordida
+        if (m_Animator != null)
+        {
+            m_Animator.speed = seMovendo ? Mathf.Clamp(velocidadeAtual * 1.5f, 1.2f, 2.5f) : 0f;
+        }
+        else if (mandibulaSuperior == null && mandibulaInferior == null && m_EscalaInicializada)
+        {
+            // Fallback para esfera procedural pura sem esqueleto
+            if (seMovendo)
+            {
+                float pulso = (aberturaNormalizada - 0.5f) * 0.04f;
+                transform.localScale = new Vector3(
+                    m_EscalaBase.x * (1f - pulso),
+                    m_EscalaBase.y * (1f + pulso * 1.2f),
+                    m_EscalaBase.z * (1f - pulso)
+                );
+            }
+            else
+            {
+                transform.localScale = m_EscalaBase;
+            }
         }
 
         // Detecta momento em que a boca fecha (mordida) para emitir som

@@ -40,17 +40,17 @@ public class OtimizadorGraficoQuest3URP : MonoBehaviour
     [Range(0.1f, 0.75f)]
     public float bloomScatter = 0.35f;
 
-    [Header("3. Iluminação Noturna e Fix de Sombras URP")]
+    [Header("3. Iluminação Diurna e Fix de Sombras URP")]
     [Tooltip("Desativa sombras de Point Lights adicionais para eliminar o erro 'Reduced additional punctual light shadows resolution'.")]
     public bool corrigirSombrasLuzesPontuais = true;
 
-    [Tooltip("Intensidade baixa da Directional Light (fundo escuro estilo Retrowave).")]
-    public float intensidadeLuzDirecionalNoturna = 0.22f;
+    [Tooltip("Intensidade solar diurna de tarde (Golden Hour).")]
+    public float intensidadeLuzDirecionalNoturna = 1.65f;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     public static void AplicarOtimizacaoAutomaticaNoBoot()
     {
-        OtimizadorGraficoQuest3URP inst = FindFirstObjectByType<OtimizadorGraficoQuest3URP>();
+        OtimizadorGraficoQuest3URP inst = FindAnyObjectByType<OtimizadorGraficoQuest3URP>();
         if (inst == null)
         {
             GameObject go = new GameObject("OtimizadorGrafico_Quest3_URP");
@@ -102,19 +102,23 @@ public class OtimizadorGraficoQuest3URP : MonoBehaviour
             urpAsset.colorGradingLutSize = 32;
         }
 
-        // 4. Ativa Post-Processing, HDR e Fundo Sólido Preto (sem Skybox) em todas as Câmeras da cena
+        // 4. Ativa Post-Processing, HDR e Fundo de Céu Diurno da Tarde em todas as Câmeras da cena
         RenderSettings.skybox = null;
-        RenderSettings.ambientMode = AmbientMode.Flat;
-        RenderSettings.ambientSkyColor = Color.black;
+        RenderSettings.ambientMode = AmbientMode.Trilight;
+        RenderSettings.ambientSkyColor = new Color(0.72f, 0.83f, 0.95f, 1f);
+        RenderSettings.ambientEquatorColor = new Color(0.95f, 0.86f, 0.74f, 1f);
+        RenderSettings.ambientGroundColor = new Color(0.30f, 0.58f, 0.32f, 1f);
+        RenderSettings.ambientIntensity = 1.35f;
 
-        Camera[] cameras = FindObjectsByType<Camera>(FindObjectsSortMode.None);
+        Color corCeuTarde = new Color(0.65f, 0.78f, 0.92f, 1f);
+        Camera[] cameras = FindObjectsByType<Camera>();
         foreach (Camera cam in cameras)
         {
             if (cam == null) continue;
             cam.allowHDR = true;
             cam.allowMSAA = true;
             cam.clearFlags = CameraClearFlags.SolidColor;
-            cam.backgroundColor = Color.black;
+            cam.backgroundColor = corCeuTarde;
 
             UniversalAdditionalCameraData camData = cam.GetComponent<UniversalAdditionalCameraData>();
             if (camData == null)
@@ -137,7 +141,7 @@ public class OtimizadorGraficoQuest3URP : MonoBehaviour
 
     public void ConfigurarVolumeGlobalBloom()
     {
-        Volume volumeGlobal = FindFirstObjectByType<Volume>();
+        Volume volumeGlobal = FindAnyObjectByType<Volume>();
         if (volumeGlobal == null)
         {
             GameObject volObj = new GameObject("Global Volume");
@@ -195,21 +199,21 @@ public class OtimizadorGraficoQuest3URP : MonoBehaviour
             else DestroyImmediate(containerLuzesAntigo);
         }
 
-        Light[] todasLuzes = FindObjectsByType<Light>(FindObjectsSortMode.None);
+        Light[] todasLuzes = FindObjectsByType<Light>();
         foreach (Light l in todasLuzes)
         {
             if (l == null) continue;
 
             if (l.type == LightType.Directional)
             {
-                // Luz direcional mais escura/noturna com Soft Shadows para destacar a emissão néon
-                l.intensity = intensidadeLuzDirecionalNoturna;
-                l.color = new Color(0.45f, 0.58f, 0.85f, 1.0f);
+                // Luz solar quente diurna de tarde (Golden Hour) com sombras suaves
+                l.intensity = 1.65f;
+                l.color = new Color(1.0f, 0.93f, 0.84f, 1.0f);
                 l.shadows = LightShadows.Soft;
-                l.shadowStrength = 0.80f;
-                l.transform.rotation = Quaternion.Euler(55f, -35f, 0f);
+                l.shadowStrength = 0.32f;
+                l.transform.rotation = Quaternion.Euler(34f, 48f, 0f);
             }
-            else
+            else if (l.name != "Luz_Portal")
             {
                 // Qualquer luz pontual remanescente (ex: feedback visual temporário) nunca projeta sombra no atlas URP
                 l.shadows = LightShadows.None;
@@ -217,9 +221,11 @@ public class OtimizadorGraficoQuest3URP : MonoBehaviour
         }
 
         RenderSettings.skybox = null;
-        RenderSettings.ambientMode = AmbientMode.Flat;
-        RenderSettings.ambientSkyColor = Color.black;
-        RenderSettings.subtractiveShadowColor = Color.black;
+        RenderSettings.ambientMode = AmbientMode.Trilight;
+        RenderSettings.ambientSkyColor = new Color(0.72f, 0.83f, 0.95f, 1f);
+        RenderSettings.ambientEquatorColor = new Color(0.95f, 0.86f, 0.74f, 1f);
+        RenderSettings.ambientGroundColor = new Color(0.30f, 0.58f, 0.32f, 1f);
+        RenderSettings.ambientIntensity = 1.35f;
     }
 }
 

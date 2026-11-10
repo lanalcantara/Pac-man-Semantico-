@@ -69,6 +69,25 @@ public class AvatarPacManFisico : MonoBehaviour
         AssentarNoSoloImediato();
     }
 
+    public bool JogoAtivoEControlesHabilitados()
+    {
+        if (HubInicialAmbiente.Instancia != null)
+        {
+            if (HubInicialAmbiente.Instancia.hubAberto ||
+                HubInicialAmbiente.Instancia.GameOverAberto ||
+                HubInicialAmbiente.Instancia.VitoriaAberta ||
+                !HubInicialAmbiente.Instancia.partidaEmAndamento)
+            {
+                return false;
+            }
+        }
+        if (controladorXR != null && !controladorXR.controlesHabilitados)
+        {
+            return false;
+        }
+        return true;
+    }
+
     private void Update()
     {
         if (m_TimerDanoRecente > 0f) m_TimerDanoRecente -= Time.deltaTime;
@@ -76,6 +95,18 @@ public class AvatarPacManFisico : MonoBehaviour
         LocalizarReferencias();
         GarantirVisibilidadeEMeshes();
         AtualizarPosicionamentoNoSolo();
+
+        if (!JogoAtivoEControlesHabilitados())
+        {
+            m_DirecaoEntrada = Vector3.zero;
+            if (m_Rigidbody != null)
+            {
+                m_Rigidbody.linearVelocity = Vector3.zero;
+                m_Rigidbody.angularVelocity = Vector3.zero;
+            }
+            return;
+        }
+
         LerEntradasControles();
         VarreduraProximidadeGemasBoca();
         VarreduraProximidadeFantasmasCorpo();
@@ -83,6 +114,15 @@ public class AvatarPacManFisico : MonoBehaviour
 
     private void FixedUpdate()
     {
+        if (!JogoAtivoEControlesHabilitados())
+        {
+            if (m_Rigidbody != null)
+            {
+                m_Rigidbody.linearVelocity = Vector3.zero;
+                m_Rigidbody.angularVelocity = Vector3.zero;
+            }
+            return;
+        }
         AplicarMovimentoFisico();
     }
 
@@ -230,12 +270,12 @@ public class AvatarPacManFisico : MonoBehaviour
     }
 
     /// <summary>
-    /// Lê controles clássicos de teclado (Input.GetAxis + fallback WASD/Setas).
+    /// Lê controles clássicos de teclado, gamepad do Xbox e VR.
     /// </summary>
     private void LerEntradasControles()
     {
-        float inputX = Input.GetAxis("Horizontal");
-        float inputZ = Input.GetAxis("Vertical");
+        float inputX = Input.GetAxisRaw("Horizontal");
+        float inputZ = Input.GetAxisRaw("Vertical");
 
         if (Input.GetKey(KeyCode.W) || Input.GetKey(KeyCode.UpArrow)) inputZ = Mathf.Max(inputZ, 1f);
         if (Input.GetKey(KeyCode.S) || Input.GetKey(KeyCode.DownArrow)) inputZ = Mathf.Min(inputZ, -1f);
@@ -243,9 +283,49 @@ public class AvatarPacManFisico : MonoBehaviour
         if (Input.GetKey(KeyCode.D) || Input.GetKey(KeyCode.RightArrow)) inputX = Mathf.Max(inputX, 1f);
 
         Vector2 dir2D = new Vector2(inputX, inputZ);
+
+#if ENABLE_INPUT_SYSTEM
+        if (UnityEngine.InputSystem.Gamepad.all.Count > 0)
+        {
+            for (int i = 0; i < UnityEngine.InputSystem.Gamepad.all.Count; i++)
+            {
+                var gp = UnityEngine.InputSystem.Gamepad.all[i];
+                if (gp == null) continue;
+                Vector2 stickEsq = gp.leftStick.ReadValue();
+                if (stickEsq.sqrMagnitude > 0.02f && stickEsq.sqrMagnitude > dir2D.sqrMagnitude)
+                {
+                    dir2D = stickEsq;
+                }
+                Vector2 dpad = gp.dpad.ReadValue();
+                if (dpad.sqrMagnitude > 0.05f && dpad.sqrMagnitude > dir2D.sqrMagnitude)
+                {
+                    dir2D = dpad;
+                }
+            }
+        }
+#endif
         if (dir2D.sqrMagnitude > 1f) dir2D.Normalize();
 
-        m_DirecaoEntrada = new Vector3(dir2D.x, 0f, dir2D.y);
+        Vector3 camFwd = Vector3.forward;
+        Vector3 camRgt = Vector3.right;
+        if (cameraTransform != null)
+        {
+            camFwd = cameraTransform.forward;
+            camRgt = cameraTransform.right;
+        }
+        else if (Camera.main != null)
+        {
+            camFwd = Camera.main.transform.forward;
+            camRgt = Camera.main.transform.right;
+        }
+
+        camFwd.y = 0f; camFwd.Normalize();
+        camRgt.y = 0f; camRgt.Normalize();
+        if (camFwd.sqrMagnitude < 0.01f) camFwd = Vector3.forward;
+        if (camRgt.sqrMagnitude < 0.01f) camRgt = Vector3.right;
+
+        m_DirecaoEntrada = (camFwd * dir2D.y + camRgt * dir2D.x);
+        if (m_DirecaoEntrada.sqrMagnitude > 1f) m_DirecaoEntrada.Normalize();
 
         if (m_DirecaoEntrada.sqrMagnitude > 0.05f)
         {

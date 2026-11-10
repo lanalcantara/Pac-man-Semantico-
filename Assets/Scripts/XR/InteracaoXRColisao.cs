@@ -74,6 +74,14 @@ namespace PacMan.XR
             try { ehTagObstaculo = alvo.CompareTag("ObstaculoInvalido"); } catch { }
 
             // 1. Verifica se o objeto tocado é uma Gema baseada no grafo ontológico
+            GemaValidaSemantica gemaValida = alvo.GetComponent<GemaValidaSemantica>() ?? alvo.GetComponentInParent<GemaValidaSemantica>();
+            if (gemaValida != null)
+            {
+                // A GemaValidaSemantica gerencia sua própria captura estrita por contato físico real (raio <= 0.45m),
+                // sequência 1 a 1, banner inferior, radar e poder de devorar fantasmas.
+                return;
+            }
+
             if (ehTagGema || alvo.name.Contains("Gema") || alvo.name.Contains("Gem") || alvo.name.Contains("PacDot") || (inst != null && inst.EhValida))
             {
                 string idItem = inst != null && !string.IsNullOrEmpty(inst.Id) ? inst.Id : alvo.name;
