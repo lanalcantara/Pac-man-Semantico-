@@ -71,6 +71,14 @@ Thumbs.db
 .mvn/
 
 
+# Android NDK / Unity temp
+.utmp/
+Assets/_Recovery/
+*.slnx
+*.mp4
+CapturaGameView.png
+CapturaVisaoAerea.png
+
 # Environment Variables
 .env
 .env.local
