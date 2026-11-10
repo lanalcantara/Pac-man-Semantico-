@@ -27,6 +27,12 @@ public class SemanticHUDManager : MonoBehaviour
     private static SemanticHUDManager s_Instancia;
     public static SemanticHUDManager Instancia => s_Instancia;
 
+    [Header("Visibilidade e Minimalismo")]
+    public static bool exibirHUDGeral = false;
+    public bool exibirTerminalLog = false;
+    public bool exibirPainelExplicativo = false;
+    public bool exibirPainelSuperior = false;
+
     [Header("Componentes Principais (Canvas)")]
     public Canvas canvasPrincipal;
     public CanvasScaler canvasScaler;
@@ -113,7 +119,7 @@ public class SemanticHUDManager : MonoBehaviour
             hud.gameObject.name = "Semantic_HUD_Canvas";
         }
 
-        hud.DefinirPainelVisivel(true);
+        hud.DefinirPainelVisivel(exibirHUDGeral);
     }
 
     public static void RemoverCanvasArcadeLegado()
@@ -156,6 +162,10 @@ public class SemanticHUDManager : MonoBehaviour
         RemoverCanvasArcadeLegado();
         GarantirEventSystem();
         GarantirCanvasEComponentes();
+        if (!exibirHUDGeral && canvasPrincipal != null)
+        {
+            canvasPrincipal.gameObject.SetActive(false);
+        }
         Time.timeScale = 1.0f;
     }
 
@@ -202,7 +212,7 @@ public class SemanticHUDManager : MonoBehaviour
             AdicionarLinhaLog("<color=#FF4455><b>[FANTASMAS]</b></color> Fantasmas <b>Vermelhos</b> perseguem e quebram sua linha! Coma itens certos para deixá-los <b>Azuis (Calmos)</b>!");
         }
 
-        DefinirPainelVisivel(true);
+        DefinirPainelVisivel(exibirHUDGeral);
         AtualizarDisplay();
     }
 
@@ -420,10 +430,11 @@ public class SemanticHUDManager : MonoBehaviour
 
     public void DefinirPainelVisivel(bool visivel)
     {
-        painelAberto = visivel;
-        if (painelHUD != null) painelHUD.SetActive(visivel);
-        if (painelExplicativoJogo != null) painelExplicativoJogo.SetActive(visivel);
-        if (painelTerminalLog != null) painelTerminalLog.SetActive(visivel);
+        painelAberto = visivel && exibirHUDGeral;
+        if (canvasPrincipal != null) canvasPrincipal.gameObject.SetActive(painelAberto);
+        if (painelHUD != null) painelHUD.SetActive(visivel && exibirHUDGeral && exibirPainelSuperior);
+        if (painelExplicativoJogo != null) painelExplicativoJogo.SetActive(visivel && exibirHUDGeral && exibirPainelExplicativo);
+        if (painelTerminalLog != null) painelTerminalLog.SetActive(visivel && exibirHUDGeral && exibirTerminalLog);
     }
 
     public bool TemModalPlayAtivo()
@@ -435,7 +446,7 @@ public class SemanticHUDManager : MonoBehaviour
     {
         DefinirModalPlayVisivel(false);
         Time.timeScale = 1.0f;
-        DefinirPainelVisivel(true);
+        DefinirPainelVisivel(exibirHUDGeral);
 
         var ctrl = FindFirstObjectByType<PacMan.Web.ControladorDemoWeb>();
         if (ctrl != null)
@@ -724,8 +735,18 @@ public class SemanticHUDManager : MonoBehaviour
             scrollRectTerminal.scrollSensitivity = 25f;
         }
 
-        if (painelHUD != null) painelHUD.SetActive(true);
-        if (painelExplicativoJogo != null) painelExplicativoJogo.SetActive(true);
-        if (painelTerminalLog != null) painelTerminalLog.SetActive(true);
+        if (!exibirHUDGeral)
+        {
+            if (canvasPrincipal != null) canvasPrincipal.gameObject.SetActive(false);
+            if (painelHUD != null) painelHUD.SetActive(false);
+            if (painelExplicativoJogo != null) painelExplicativoJogo.SetActive(false);
+            if (painelTerminalLog != null) painelTerminalLog.SetActive(false);
+        }
+        else
+        {
+            if (painelHUD != null) painelHUD.SetActive(exibirPainelSuperior);
+            if (painelExplicativoJogo != null) painelExplicativoJogo.SetActive(exibirPainelExplicativo);
+            if (painelTerminalLog != null) painelTerminalLog.SetActive(exibirTerminalLog);
+        }
     }
 }

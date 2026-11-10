@@ -26,6 +26,9 @@ public class PlacaSinalizacaoSemantica : MonoBehaviour
     public const float AlturaRectTexto = 0.68f;
     public const float OffsetZTexto = 0.045f;
 
+    [Header("Visibilidade e Minimalismo")]
+    public static bool exibirPlacas = false;
+
     [Header("Identificação da Bifurcação e Hierarquia OWL")]
     public string idBifurcacao = "Bifurcacao_01";
     public string setaDirecao = "⬆";
@@ -71,6 +74,11 @@ public class PlacaSinalizacaoSemantica : MonoBehaviour
 
     private void Awake()
     {
+        if (!exibirPlacas)
+        {
+            gameObject.SetActive(false);
+            return;
+        }
         SincronizarGeometriaPlacaTransito();
         GarantirReferenciasTextMeshPro();
         GarantirTextoPadraoOffline();
@@ -79,6 +87,11 @@ public class PlacaSinalizacaoSemantica : MonoBehaviour
 
     private void OnEnable()
     {
+        if (!exibirPlacas)
+        {
+            gameObject.SetActive(false);
+            return;
+        }
         SincronizarGeometriaPlacaTransito();
         GarantirReferenciasTextMeshPro();
         GarantirTextoPadraoOffline();
@@ -87,6 +100,11 @@ public class PlacaSinalizacaoSemantica : MonoBehaviour
 
     private void Start()
     {
+        if (!exibirPlacas)
+        {
+            gameObject.SetActive(false);
+            return;
+        }
         SincronizarGeometriaPlacaTransito();
         GarantirReferenciasTextMeshPro();
         GarantirTextoPadraoOffline();
